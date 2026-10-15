@@ -1,0 +1,22 @@
+{
+  "name": "explainer-studio",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "node cli/build.ts",
+    "check": "node cli/build.ts --check-only",
+    "render": "node cli/render.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --test \"test/**/*.test.ts\""
+  },
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.11"
+  },
+  "private": true,
+  "description": "Script to themed, deterministic explainer animation for the upper 2/3 of a YouTube Short"
+}

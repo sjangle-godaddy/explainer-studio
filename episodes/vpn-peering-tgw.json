@@ -1,0 +1,183 @@
+{
+  "id": "vpn-peering-tgw",
+  "title": "VPN vs VPC Peering vs Transit Gateway",
+  "theme": "blueprint",
+  "scenes": [
+    {
+      "id": "vpn",
+      "layout": "full",
+      "blocks": [
+        {
+          "id": "vpnMap", "type": "network-map",
+          "zones": [
+            { "id": "dc", "label": "DATA CENTER", "role": "onprem", "size": 1 },
+            { "id": "internet", "label": "PUBLIC INTERNET", "role": "external", "size": 0.75 },
+            { "id": "aws", "label": "AWS", "role": "boundary", "size": 1.35, "children": [
+              { "id": "vpcZone", "label": "VPC 10.0.0.0/16", "role": "private", "size": 1 }
+            ] }
+          ],
+          "nodes": [
+            { "id": "dcServer", "type": "server", "zone": "dc", "x": 0.2, "y": 0.62, "label": "ON-PREM APP", "sub": "192.168.1.10" },
+            { "id": "cgw", "type": "vpngw", "zone": "dc", "x": 0.62, "y": 0.62, "label": "COMPANY VPN GW", "side": "right" },
+            { "id": "vgw", "type": "vpngw", "zone": "aws", "edge": "top", "x": 0.62, "label": "AWS VPN GW", "side": "right" },
+            { "id": "app", "type": "server", "zone": "vpcZone", "x": 0.62, "y": 0.62, "label": "EC2 APP", "sub": "10.0.1.5", "side": "right" }
+          ],
+          "links": [
+            { "from": "dcServer", "to": "cgw" },
+            { "id": "tunnel", "from": "cgw", "to": "vgw", "style": "tunnel" },
+            { "from": "vgw", "to": "app" }
+          ]
+        }
+      ],
+      "beats": [
+        { "id": "tunnel", "name": "Encrypted tunnel", "caption": "VPN = ENCRYPTED TUNNEL",
+          "line": "VPN (Virtual Private Network) creates an encrypted tunnel between two endpoints over an network.",
+          "focus": ["cgw", "vgw", "tunnel", "internet"],
+          "flows": [{ "route": ["cgw", "vgw"], "glyph": "locked", "color": "response", "line": false, "delay": 1.4 }] },
+        { "id": "site", "name": "Site-to-Site VPN", "caption": "DATA CENTER TO VPC",
+          "line": "For example, AWS Site-to-Site VPN securely connects your company's data center to your AWS VPC.",
+          "show": ["dcServer", "app"], "focus": ["dc", "aws", "vpcZone", "dcServer", "cgw", "vgw", "app", "tunnel", "dcServer-cgw", "vgw-app"], "ring": ["dc", "vpcZone"] },
+        { "id": "crypt", "name": "Encrypt and decrypt", "caption": "ENCRYPT, CROSS, DECRYPT",
+          "line": "In background, Your company's VPN gateway encrypts outgoing traffic, which travels through the public internet, and the AWS VPN gateway decrypts it.",
+          "focus": ["dcServer", "cgw", "vgw", "app", "tunnel", "internet", "dcServer-cgw", "vgw-app"], "pulse": ["cgw", "vgw"],
+          "flows": [{ "route": ["dcServer", "cgw", "vgw", "app"], "color": "public", "line": false, "delay": 0.6, "period": 1.1,
+            "transform": [{ "at": "cgw", "glyph": "locked", "color": "response" }, { "at": "vgw", "glyph": "plain", "color": "public" }] }] },
+        { "id": "privateIps", "name": "Private IPs", "caption": "PRIVATE IPS BOTH WAYS",
+          "line": "This allows both networks to communicate securely using their private IP addresses.",
+          "focus": ["dcServer", "app", "tunnel", "cgw", "vgw", "dcServer-cgw", "vgw-app"], "pulse": ["dcServer", "app"],
+          "flows": [
+            { "route": ["dcServer", "cgw", "vgw", "app"], "mode": "once", "line": false, "delay": 0.3, "dur": 2.2, "color": "public",
+              "transform": [{ "at": "cgw", "glyph": "locked", "color": "response" }, { "at": "vgw", "glyph": "plain", "color": "public" }] },
+            { "route": ["dcServer", "cgw", "vgw", "app"], "reverse": true, "mode": "once", "line": false, "delay": 2.8, "dur": 2.2, "color": "private",
+              "transform": [{ "at": "vgw", "glyph": "locked", "color": "response" }, { "at": "cgw", "glyph": "plain", "color": "private" }] }
+          ] }
+      ]
+    },
+    {
+      "id": "peering",
+      "layout": "full",
+      "blocks": [
+        {
+          "id": "peerMap", "type": "network-map",
+          "zones": [
+            { "id": "internet", "label": "PUBLIC INTERNET", "role": "external", "size": 0.45 },
+            { "id": "aws", "label": "AWS BACKBONE", "role": "boundary", "size": 2.2 }
+          ],
+          "nodes": [
+            { "id": "vpcA", "type": "vpc", "zone": "aws", "x": 0.18, "y": 0.3, "label": "VPC A", "sub": "10.0.0.0/16", "side": "above" },
+            { "id": "vpcB", "type": "vpc", "zone": "aws", "x": 0.82, "y": 0.3, "label": "VPC B", "sub": "10.1.0.0/16", "side": "above" },
+            { "id": "vpcC", "type": "vpc", "zone": "aws", "x": 0.5, "y": 0.72, "label": "VPC C", "sub": "10.2.0.0/16", "side": "below" }
+          ],
+          "links": [
+            { "id": "pAB", "from": "vpcA", "to": "vpcB", "color": "private" },
+            { "id": "pBC", "from": "vpcB", "to": "vpcC", "color": "private" },
+            { "id": "pAC", "from": "vpcA", "to": "vpcC", "color": "private", "dashed": true }
+          ]
+        }
+      ],
+      "beats": [
+        { "id": "peer", "name": "VPC Peering", "caption": "VPC PEERING",
+          "line": "VPC Peering: help to create a direct, private connection between two VPCs (Virtual private cloud) that too using AWS infra without sending traffic over the public internet.",
+          "show": ["vpcA", "vpcB", "pAB"], "focus": ["aws", "vpcA", "vpcB", "pAB", "internet"], "strike": ["internet"],
+          "flows": [{ "route": ["vpcA", "vpcB"], "color": "private", "line": false, "delay": 1.2, "period": 1.2 }] },
+        { "id": "limit", "name": "Not transitive", "caption": "NOT TRANSITIVE",
+          "line": "But there's one important limitation: VPC Peering is not transitive.",
+          "show": ["vpcC", "pBC"], "focus": ["aws", "vpcA", "vpcB", "vpcC", "pAB", "pBC"], "ring": ["vpcC"] },
+        { "id": "aToC", "name": "A cannot reach C", "caption": "A TO C BLOCKED",
+          "line": "If VPC A connects to B, and B connects to C, that doesn't mean A can communicate with C.",
+          "focus": ["vpcA", "vpcB", "vpcC", "pAB", "pBC"], "pulse": ["vpcB"],
+          "flows": [{ "route": ["vpcA", "vpcB", "vpcC"], "color": "blocked", "blockAt": "vpcC", "mode": "once", "delay": 0.6, "dur": 3 }] },
+        { "id": "addAC", "name": "Extra A-C peering", "caption": "PEER A WITH C",
+          "line": "You would need another peering connection between A and C.",
+          "show": ["pAC"], "focus": ["vpcA", "vpcC", "pAC"],
+          "flows": [{ "route": ["vpcA", "vpcC"], "color": "private", "line": false, "delay": 0.9, "period": 1.1 }] }
+      ]
+    },
+    {
+      "id": "mesh",
+      "layout": "hero+stat",
+      "blocks": [
+        { "id": "meshGraph", "type": "mesh-graph", "mode": "mesh", "count": 20, "prefix": "vpc", "nodeType": "vpc", "role": "private",
+          "named": [{ "id": "vpcA", "label": "VPC A", "at": 18 }, { "id": "vpcB", "label": "VPC B", "at": 2 }, { "id": "vpcC", "label": "VPC C", "at": 9 }] },
+        { "id": "count", "type": "stat-counter", "slot": "stat", "value": 0, "label": "PEERING CONNECTIONS", "role": "blocked" }
+      ],
+      "beats": [
+        { "id": "twenty", "name": "20 VPCs is a mess", "caption": "NOW 20 VPCS",
+          "line": "Now imagine you have 20 VPCs. Connecting these together with VPC Peering will be a mess right.",
+          "set": { "count": { "value": 190 } } }
+      ]
+    },
+    {
+      "id": "tgw",
+      "layout": "hero+stat",
+      "blocks": [
+        { "id": "hubGraph", "type": "mesh-graph", "mode": "hub", "count": 20, "prefix": "vpc", "nodeType": "vpc", "role": "private",
+          "named": [{ "id": "vpcA", "label": "VPC A", "at": 18 }, { "id": "vpcB", "label": "VPC B", "at": 2 }, { "id": "vpcC", "label": "VPC C", "at": 9 }],
+          "hub": { "id": "tgw", "label": ["TRANSIT", "GATEWAY"], "type": "router", "side": "left" } },
+        { "id": "count", "type": "stat-counter", "slot": "stat", "value": 190, "label": "PEERING CONNECTIONS", "role": "blocked" }
+      ],
+      "beats": [
+        { "id": "central", "name": "Central router", "caption": "TRANSIT GATEWAY",
+          "line": "That's where AWS Transit Gateway comes in. Think of it as a central router.",
+          "ring": ["tgw"], "pulse": ["tgw"] },
+        { "id": "attach", "name": "Attach once", "caption": "ATTACH EACH VPC ONCE",
+          "line": "Instead of connecting every VPC directly to every other, you attach them to a Transit Gateway.",
+          "set": { "count": { "value": 20, "label": "ATTACHMENTS" } },
+          "flows": [{ "route": ["vpcA", "tgw", "vpcC"], "color": "private", "line": false, "delay": 1.2, "period": 1.2 }] }
+      ]
+    },
+    {
+      "id": "routing",
+      "layout": "main+strip",
+      "blocks": [
+        { "id": "hubGraph", "type": "mesh-graph", "mode": "hub", "count": 20, "prefix": "vpc", "nodeType": "vpc", "role": "private", "margin": 70, "gap": 60,
+          "named": [{ "id": "vpcA", "label": "VPC A", "at": 18 }, { "id": "vpcB", "label": "VPC B", "at": 2 }, { "id": "vpcC", "label": "VPC C", "at": 9 }],
+          "hub": { "id": "tgw", "label": ["TRANSIT", "GATEWAY"], "type": "router", "side": "left" },
+          "extras": [{ "id": "dcHub", "type": "datacenter", "label": "DATA CENTER", "side": "below" }] },
+        { "id": "rt", "type": "table", "slot": "strip", "title": "TGW ROUTE TABLE",
+          "columns": ["DESTINATION", "ATTACHMENT"],
+          "rows": [
+            { "id": "rA", "cells": ["10.0.0.0/16", "VPC A"] },
+            { "id": "rC", "cells": ["10.2.0.0/16", "VPC C"] },
+            { "id": "rDc", "cells": ["192.168.0.0/16", "SITE-TO-SITE VPN"] }
+          ] }
+      ],
+      "beats": [
+        { "id": "routes", "name": "Route tables", "caption": "ROUTE TABLE DECIDES",
+          "line": "It routes traffic between these networks based on its routing tables.",
+          "focus": ["hubGraph", "tgw", "vpcA", "vpcC", "rt", "rA", "rC", "rDc"], "pulse": ["rC"],
+          "flows": [{ "route": ["vpcA", "tgw", "vpcC"], "color": "private", "line": false, "delay": 1.0, "period": 1.2 }] },
+        { "id": "onprem", "name": "On-prem over VPN", "caption": "PLUS ON-PREM VIA VPN",
+          "line": "It can connect your on-premises datacenter through a AWS Site-to-Site VPN.",
+          "show": ["dcHub", "tgw-dcHub"], "focus": ["dcHub", "tgw-dcHub", "tgw", "vpcA", "rt", "rDc"], "pulse": ["rDc"],
+          "flows": [{ "route": ["dcHub", "tgw", "vpcA"], "glyph": "locked", "color": "response", "line": false, "delay": 1.4, "period": 1.3,
+            "transform": { "at": "tgw", "glyph": "plain", "color": "private" } }] }
+      ]
+    },
+    {
+      "id": "takeaway",
+      "layout": "full",
+      "blocks": [
+        { "id": "cards", "type": "summary-cards", "cards": [
+          { "id": "vpnCard", "title": "VPN", "role": "response", "icon": { "type": "vpngw" },
+            "text": "Encrypted tunnel between networks, across the public internet." },
+          { "id": "peerCard", "title": "VPC PEERING", "role": "private", "icon": { "type": "vpc", "id": "vpcA" },
+            "text": "Direct private link between two VPCs. Not transitive." },
+          { "id": "tgwCard", "title": "TRANSIT GATEWAY", "role": "gateway", "icon": { "type": "router", "id": "tgw" },
+            "text": "Central router for many VPCs and on-premises networks." }
+        ] }
+      ],
+      "beats": [
+        { "id": "sumVpn", "name": "Takeaway: VPN", "caption": "THE TAKEAWAY",
+          "line": "So here's the takeaway: VPN creates an encrypted tunnel between networks.",
+          "show": ["vpnCard"], "focus": ["vpnCard"], "pulse": ["vpnCard"] },
+        { "id": "sumPeer", "name": "Takeaway: Peering", "caption": "PEERING: TWO VPCS",
+          "line": "VPC Peering directly connects two VPCs using private IP addresses, but it don't support transitive routing.",
+          "show": ["peerCard"], "focus": ["vpnCard", "peerCard"], "pulse": ["peerCard"] },
+        { "id": "sumTgw", "name": "Takeaway: Transit Gateway", "caption": "TGW: CENTRAL ROUTER",
+          "line": "Transit Gateway acts as a central router connecting multiple VPCs and on-premises networks.",
+          "show": ["tgwCard"], "pulse": ["tgwCard"] }
+      ]
+    }
+  ]
+}

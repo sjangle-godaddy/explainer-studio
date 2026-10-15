@@ -1,0 +1,21 @@
+VPN (Virtual Private Network) creates an encrypted tunnel between two endpoints over an network.
+For example, AWS Site-to-Site VPN securely connects your company's data center to your AWS VPC.
+In background, Your company's VPN gateway encrypts outgoing traffic, which travels through the public internet, and the AWS VPN gateway decrypts it.
+This allows both networks to communicate securely using their private IP addresses.
+
+VPC Peering: help to create a direct, private connection between two VPCs (Virtual private cloud) 
+that too using AWS infra without sending traffic over the public internet.
+But there's one important limitation: VPC Peering is not transitive.
+If VPC A connects to B, and B connects to C, that doesn't mean A can communicate with C.
+You would need another peering connection between A and C.
+
+Now imagine you have 20 VPCs. Connecting these together with VPC Peering will be a mess right.
+That's where AWS Transit Gateway comes in. Think of it as a central router.
+Instead of connecting every VPC directly to every other, you attach them to a Transit Gateway.
+It routes traffic between these networks based on its routing tables. 
+It can connect your on-premises datacenter through a AWS Site-to-Site VPN.
+
+So here's the takeaway:
+VPN creates an encrypted tunnel between networks.
+VPC Peering directly connects two VPCs using private IP addresses, but it don't support transitive routing.
+Transit Gateway acts as a central router connecting multiple VPCs and on-premises networks.
