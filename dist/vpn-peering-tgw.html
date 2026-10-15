@@ -1,0 +1,2179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VPN vs VPC Peering vs Transit Gateway</title>
+<style>
+  :root { --bg: #050d1f; --panel: #0b1a38; --line: #1f3a6b; --text: #e7eefb; --muted: #8fa3c7; --amber: #ffb020; --cyan: #22d3ee; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; gap: 20px; padding: 16px; align-items: flex-start; justify-content: center;
+  }
+  .stage-wrap {
+    position: relative; flex: 0 0 auto;
+    height: min(calc(100vh - 32px), calc((100vw - 32px) * var(--ar)));
+    aspect-ratio: var(--ar-css);
+    border-radius: 10px; overflow: hidden;
+    box-shadow: 0 0 0 1px var(--line), 0 20px 60px rgba(0, 0, 0, .5);
+  }
+  #stage { display: block; width: 100%; height: 100%; }
+  .safe { position: absolute; border: 2px dashed #ff4d6d; box-shadow: 0 0 0 9999px rgba(255, 77, 109, .12); pointer-events: none; display: none; }
+  .safe span { position: absolute; right: 4px; bottom: 4px; font: 600 11px system-ui, sans-serif; color: #ff4d6d; background: rgba(5, 13, 31, .8); padding: 1px 6px; border-radius: 4px; }
+  .facecam { position: absolute; left: 0; right: 0; bottom: 0; display: none; place-items: center; color: #4a5a78; font: 600 13px system-ui, sans-serif; letter-spacing: .1em; border-top: 1px dashed #24324d; pointer-events: none; }
+  .stage-wrap.full .facecam { display: grid; }
+  .stage-wrap.show-safe .safe { display: block; }
+  .panel { flex: 0 1 380px; min-width: 280px; max-height: calc(100vh - 32px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  h1 { font-size: 17px; margin: 0; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button, select { font: inherit; color: var(--text); background: #13284f; border: 1px solid #2b4c86; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  button:hover, select:hover { border-color: var(--cyan); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: #1c3d78; border-color: var(--amber); }
+  input[type=range] { width: 100%; accent-color: var(--amber); }
+  .time { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 110px; }
+  .notes { border-top: 1px solid var(--line); padding-top: 12px; }
+  .notes .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; margin-top: 8px; }
+  .notes .line { font-size: 15px; }
+  .status { font-size: 12px; color: var(--muted); white-space: pre-wrap; }
+  .status.ok { color: #34d399; }
+  .status.bad { color: #ff4d6d; }
+  kbd { background: #13284f; border: 1px solid #2b4c86; border-radius: 4px; padding: 0 5px; font-size: 12px; }
+  @media (max-width: 860px) {
+    body { flex-direction: column; align-items: center; }
+    .stage-wrap { height: auto; width: min(100%, calc((100vh - 32px) / var(--ar))); }
+    .panel { width: 100%; max-height: none; flex: none; }
+  }
+</style>
+</head>
+<body>
+<div class="stage-wrap" id="stageWrap">
+  <canvas id="stage" aria-label="VPN vs VPC Peering vs Transit Gateway"></canvas>
+  <div class="safe" id="safe"><span>SAFE ZONE</span></div>
+  <div class="facecam" id="facecam">FACE CAM AREA</div>
+</div>
+<div class="panel">
+  <h1 id="title"></h1>
+  <div class="row">
+    <button id="play" class="primary">Play</button>
+    <button id="restart">Restart</button>
+    <span class="time" id="time"></span>
+  </div>
+  <input id="scrub" type="range" min="0" step="0.01" value="0" aria-label="Scrubber">
+  <div class="row">
+    <select id="scene" aria-label="Scene"></select>
+    <label><input type="checkbox" id="safeToggle"> Safe zone</label>
+  </div>
+  <div class="row">
+    <label>Frame <select id="frame">
+      <option value="panel">Animation panel 1080 x 1280</option>
+      <option value="full">Full 9:16 1080 x 1920 (face cam area blank)</option>
+    </select></label>
+  </div>
+  <div class="row">
+    <button id="mp4">Download MP4</button>
+    <button id="webm">Record WebM</button>
+  </div>
+  <div class="status" id="exportStatus"></div>
+  <div class="status" id="layoutStatus"></div>
+  <div class="notes">
+    <div class="k">Scene</div><div id="nBeat"></div>
+    <div class="k">Spoken line</div><div class="line" id="nLine"></div>
+    <div class="k">Layout and blocks</div><div id="nBlocks"></div>
+    <div class="k">Focus</div><div id="nFocus"></div>
+    <div class="k">Flows</div><div id="nFlows"></div>
+  </div>
+  <div class="status">
+    <kbd>Space</kbd> play/pause &nbsp; <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> seek 1s (<kbd>Shift</kbd> 5s)<br>
+    <kbd>&uarr;</kbd>/<kbd>&darr;</kbd> previous/next scene &nbsp; <kbd>Home</kbd> start &nbsp; <kbd>S</kbd> safe zone
+  </div>
+</div>
+<script id="episode">
+window.EPISODE = {"id":"vpn-peering-tgw","title":"VPN vs VPC Peering vs Transit Gateway","theme":"blueprint","scenes":[{"id":"vpn","layout":"full","blocks":[{"id":"vpnMap","type":"network-map","zones":[{"id":"dc","label":"DATA CENTER","role":"onprem","size":1},{"id":"internet","label":"PUBLIC INTERNET","role":"external","size":0.75},{"id":"aws","label":"AWS","role":"boundary","size":1.35,"children":[{"id":"vpcZone","label":"VPC 10.0.0.0/16","role":"private","size":1}]}],"nodes":[{"id":"dcServer","type":"server","zone":"dc","x":0.2,"y":0.62,"label":"ON-PREM APP","sub":"192.168.1.10"},{"id":"cgw","type":"vpngw","zone":"dc","x":0.62,"y":0.62,"label":"COMPANY VPN GW","side":"right"},{"id":"vgw","type":"vpngw","zone":"aws","edge":"top","x":0.62,"label":"AWS VPN GW","side":"right"},{"id":"app","type":"server","zone":"vpcZone","x":0.62,"y":0.62,"label":"EC2 APP","sub":"10.0.1.5","side":"right"}],"links":[{"from":"dcServer","to":"cgw"},{"id":"tunnel","from":"cgw","to":"vgw","style":"tunnel"},{"from":"vgw","to":"app"}]}],"beats":[{"id":"tunnel","name":"Encrypted tunnel","caption":"VPN = ENCRYPTED TUNNEL","line":"VPN (Virtual Private Network) creates an encrypted tunnel between two endpoints over an network.","focus":["cgw","vgw","tunnel","internet"],"flows":[{"route":["cgw","vgw"],"glyph":"locked","color":"response","line":false,"delay":1.4}]},{"id":"site","name":"Site-to-Site VPN","caption":"DATA CENTER TO VPC","line":"For example, AWS Site-to-Site VPN securely connects your company's data center to your AWS VPC.","show":["dcServer","app"],"focus":["dc","aws","vpcZone","dcServer","cgw","vgw","app","tunnel","dcServer-cgw","vgw-app"],"ring":["dc","vpcZone"]},{"id":"crypt","name":"Encrypt and decrypt","caption":"ENCRYPT, CROSS, DECRYPT","line":"In background, Your company's VPN gateway encrypts outgoing traffic, which travels through the public internet, and the AWS VPN gateway decrypts it.","focus":["dcServer","cgw","vgw","app","tunnel","internet","dcServer-cgw","vgw-app"],"pulse":["cgw","vgw"],"flows":[{"route":["dcServer","cgw","vgw","app"],"color":"public","line":false,"delay":0.6,"period":1.1,"transform":[{"at":"cgw","glyph":"locked","color":"response"},{"at":"vgw","glyph":"plain","color":"public"}]}]},{"id":"privateIps","name":"Private IPs","caption":"PRIVATE IPS BOTH WAYS","line":"This allows both networks to communicate securely using their private IP addresses.","focus":["dcServer","app","tunnel","cgw","vgw","dcServer-cgw","vgw-app"],"pulse":["dcServer","app"],"flows":[{"route":["dcServer","cgw","vgw","app"],"mode":"once","line":false,"delay":0.3,"dur":2.2,"color":"public","transform":[{"at":"cgw","glyph":"locked","color":"response"},{"at":"vgw","glyph":"plain","color":"public"}]},{"route":["dcServer","cgw","vgw","app"],"reverse":true,"mode":"once","line":false,"delay":2.8,"dur":2.2,"color":"private","transform":[{"at":"vgw","glyph":"locked","color":"response"},{"at":"cgw","glyph":"plain","color":"private"}]}]}]},{"id":"peering","layout":"full","blocks":[{"id":"peerMap","type":"network-map","zones":[{"id":"internet","label":"PUBLIC INTERNET","role":"external","size":0.45},{"id":"aws","label":"AWS BACKBONE","role":"boundary","size":2.2}],"nodes":[{"id":"vpcA","type":"vpc","zone":"aws","x":0.18,"y":0.3,"label":"VPC A","sub":"10.0.0.0/16","side":"above"},{"id":"vpcB","type":"vpc","zone":"aws","x":0.82,"y":0.3,"label":"VPC B","sub":"10.1.0.0/16","side":"above"},{"id":"vpcC","type":"vpc","zone":"aws","x":0.5,"y":0.72,"label":"VPC C","sub":"10.2.0.0/16","side":"below"}],"links":[{"id":"pAB","from":"vpcA","to":"vpcB","color":"private"},{"id":"pBC","from":"vpcB","to":"vpcC","color":"private"},{"id":"pAC","from":"vpcA","to":"vpcC","color":"private","dashed":true}]}],"beats":[{"id":"peer","name":"VPC Peering","caption":"VPC PEERING","line":"VPC Peering: help to create a direct, private connection between two VPCs (Virtual private cloud) that too using AWS infra without sending traffic over the public internet.","show":["vpcA","vpcB","pAB"],"focus":["aws","vpcA","vpcB","pAB","internet"],"strike":["internet"],"flows":[{"route":["vpcA","vpcB"],"color":"private","line":false,"delay":1.2,"period":1.2}]},{"id":"limit","name":"Not transitive","caption":"NOT TRANSITIVE","line":"But there's one important limitation: VPC Peering is not transitive.","show":["vpcC","pBC"],"focus":["aws","vpcA","vpcB","vpcC","pAB","pBC"],"ring":["vpcC"]},{"id":"aToC","name":"A cannot reach C","caption":"A TO C BLOCKED","line":"If VPC A connects to B, and B connects to C, that doesn't mean A can communicate with C.","focus":["vpcA","vpcB","vpcC","pAB","pBC"],"pulse":["vpcB"],"flows":[{"route":["vpcA","vpcB","vpcC"],"color":"blocked","blockAt":"vpcC","mode":"once","delay":0.6,"dur":3}]},{"id":"addAC","name":"Extra A-C peering","caption":"PEER A WITH C","line":"You would need another peering connection between A and C.","show":["pAC"],"focus":["vpcA","vpcC","pAC"],"flows":[{"route":["vpcA","vpcC"],"color":"private","line":false,"delay":0.9,"period":1.1}]}]},{"id":"mesh","layout":"hero+stat","blocks":[{"id":"meshGraph","type":"mesh-graph","mode":"mesh","count":20,"prefix":"vpc","nodeType":"vpc","role":"private","named":[{"id":"vpcA","label":"VPC A","at":18},{"id":"vpcB","label":"VPC B","at":2},{"id":"vpcC","label":"VPC C","at":9}]},{"id":"count","type":"stat-counter","slot":"stat","value":0,"label":"PEERING CONNECTIONS","role":"blocked"}],"beats":[{"id":"twenty","name":"20 VPCs is a mess","caption":"NOW 20 VPCS","line":"Now imagine you have 20 VPCs. Connecting these together with VPC Peering will be a mess right.","set":{"count":{"value":190}}}]},{"id":"tgw","layout":"hero+stat","blocks":[{"id":"hubGraph","type":"mesh-graph","mode":"hub","count":20,"prefix":"vpc","nodeType":"vpc","role":"private","named":[{"id":"vpcA","label":"VPC A","at":18},{"id":"vpcB","label":"VPC B","at":2},{"id":"vpcC","label":"VPC C","at":9}],"hub":{"id":"tgw","label":["TRANSIT","GATEWAY"],"type":"router","side":"left"}},{"id":"count","type":"stat-counter","slot":"stat","value":190,"label":"PEERING CONNECTIONS","role":"blocked"}],"beats":[{"id":"central","name":"Central router","caption":"TRANSIT GATEWAY","line":"That's where AWS Transit Gateway comes in. Think of it as a central router.","ring":["tgw"],"pulse":["tgw"]},{"id":"attach","name":"Attach once","caption":"ATTACH EACH VPC ONCE","line":"Instead of connecting every VPC directly to every other, you attach them to a Transit Gateway.","set":{"count":{"value":20,"label":"ATTACHMENTS"}},"flows":[{"route":["vpcA","tgw","vpcC"],"color":"private","line":false,"delay":1.2,"period":1.2}]}]},{"id":"routing","layout":"main+strip","blocks":[{"id":"hubGraph","type":"mesh-graph","mode":"hub","count":20,"prefix":"vpc","nodeType":"vpc","role":"private","margin":70,"gap":60,"named":[{"id":"vpcA","label":"VPC A","at":18},{"id":"vpcB","label":"VPC B","at":2},{"id":"vpcC","label":"VPC C","at":9}],"hub":{"id":"tgw","label":["TRANSIT","GATEWAY"],"type":"router","side":"left"},"extras":[{"id":"dcHub","type":"datacenter","label":"DATA CENTER","side":"below"}]},{"id":"rt","type":"table","slot":"strip","title":"TGW ROUTE TABLE","columns":["DESTINATION","ATTACHMENT"],"rows":[{"id":"rA","cells":["10.0.0.0/16","VPC A"]},{"id":"rC","cells":["10.2.0.0/16","VPC C"]},{"id":"rDc","cells":["192.168.0.0/16","SITE-TO-SITE VPN"]}]}],"beats":[{"id":"routes","name":"Route tables","caption":"ROUTE TABLE DECIDES","line":"It routes traffic between these networks based on its routing tables.","focus":["hubGraph","tgw","vpcA","vpcC","rt","rA","rC","rDc"],"pulse":["rC"],"flows":[{"route":["vpcA","tgw","vpcC"],"color":"private","line":false,"delay":1,"period":1.2}]},{"id":"onprem","name":"On-prem over VPN","caption":"PLUS ON-PREM VIA VPN","line":"It can connect your on-premises datacenter through a AWS Site-to-Site VPN.","show":["dcHub","tgw-dcHub"],"focus":["dcHub","tgw-dcHub","tgw","vpcA","rt","rDc"],"pulse":["rDc"],"flows":[{"route":["dcHub","tgw","vpcA"],"glyph":"locked","color":"response","line":false,"delay":1.4,"period":1.3,"transform":{"at":"tgw","glyph":"plain","color":"private"}}]}]},{"id":"takeaway","layout":"full","blocks":[{"id":"cards","type":"summary-cards","cards":[{"id":"vpnCard","title":"VPN","role":"response","icon":{"type":"vpngw"},"text":"Encrypted tunnel between networks, across the public internet."},{"id":"peerCard","title":"VPC PEERING","role":"private","icon":{"type":"vpc","id":"vpcA"},"text":"Direct private link between two VPCs. Not transitive."},{"id":"tgwCard","title":"TRANSIT GATEWAY","role":"gateway","icon":{"type":"router","id":"tgw"},"text":"Central router for many VPCs and on-premises networks."}]}],"beats":[{"id":"sumVpn","name":"Takeaway: VPN","caption":"THE TAKEAWAY","line":"So here's the takeaway: VPN creates an encrypted tunnel between networks.","show":["vpnCard"],"focus":["vpnCard"],"pulse":["vpnCard"]},{"id":"sumPeer","name":"Takeaway: Peering","caption":"PEERING: TWO VPCS","line":"VPC Peering directly connects two VPCs using private IP addresses, but it don't support transitive routing.","show":["peerCard"],"focus":["vpnCard","peerCard"],"pulse":["peerCard"]},{"id":"sumTgw","name":"Takeaway: Transit Gateway","caption":"TGW: CENTRAL ROUTER","line":"Transit Gateway acts as a central router connecting multiple VPCs and on-premises networks.","show":["tgwCard"],"pulse":["tgwCard"]}]}]};
+window.FONT_B64 = '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';
+</script>
+<script id="player">
+"use strict";
+(() => {
+  // src/util.ts
+  var clamp01 = (x) => Math.max(0, Math.min(1, x));
+  var lerp = (a, b, k) => a + (b - a) * k;
+  var easeOutCubic = (x) => 1 - Math.pow(1 - x, 3);
+  var easeInOutCubic = (x) => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+  var easeOutBack = (x) => {
+    const c = 0.9, u = x - 1;
+    return 1 + (c + 1) * u * u * u + c * u * u;
+  };
+  var ISO = Math.tan(Math.PI / 6);
+  var wordCount = (s) => (s || "").trim().split(/\s+/).filter(Boolean).length;
+  function textWidth(theme, s, size) {
+    let w = 0;
+    for (const ch of s) w += theme.font.adv[ch] ?? 0.5;
+    return w * size;
+  }
+  var unsupportedChars = (theme, s) => [...new Set([...s].filter((ch) => !(ch in theme.font.adv)))];
+  function wrap(theme, s, size, maxW) {
+    const out = [];
+    let line = "";
+    for (const word of s.split(/\s+/).filter(Boolean)) {
+      const next = line ? line + " " + word : word;
+      if (line && textWidth(theme, next, size) > maxW) {
+        out.push(line);
+        line = word;
+      } else line = next;
+    }
+    if (line) out.push(line);
+    return out;
+  }
+  var boxCenter = (b) => [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+  var inter = (a, b, g = 0) => a[0] < b[2] + g && b[0] < a[2] + g && a[1] < b[3] + g && b[1] < a[3] + g;
+  var inset = (b, d) => [b[0] + d, b[1] + d, b[2] - d, b[3] - d];
+  function segHitsBox(p, q, b) {
+    let t0 = 0, t1 = 1;
+    const dx = q[0] - p[0], dy = q[1] - p[1];
+    const tests = [[-dx, p[0] - b[0]], [dx, b[2] - p[0]], [-dy, p[1] - b[1]], [dy, b[3] - p[1]]];
+    for (const [pp, qq] of tests) {
+      if (pp === 0) {
+        if (qq < 0) return false;
+        continue;
+      }
+      const r = qq / pp;
+      if (pp < 0) {
+        if (r > t1) return false;
+        if (r > t0) t0 = r;
+      } else {
+        if (r < t0) return false;
+        if (r < t1) t1 = r;
+      }
+    }
+    return t1 - t0 > 1e-6;
+  }
+  function cumLengths(pts) {
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    return cum;
+  }
+  function pointAt(pts, cum, d) {
+    if (d <= 0) return pts[0];
+    for (let i = 1; i < pts.length; i++) if (cum[i] >= d) {
+      const k = (d - cum[i - 1]) / (cum[i] - cum[i - 1] || 1);
+      return [lerp(pts[i - 1][0], pts[i][0], k), lerp(pts[i - 1][1], pts[i][1], k)];
+    }
+    return pts[pts.length - 1];
+  }
+  function slicePts(pts, d) {
+    const cum = cumLengths(pts), out = [pts[0]];
+    for (let i = 1; i < pts.length; i++) {
+      if (cum[i] <= d) out.push(pts[i]);
+      else {
+        out.push(pointAt(pts, cum, d));
+        break;
+      }
+    }
+    return out;
+  }
+  function hexRgb(h) {
+    const n = parseInt(h.slice(1, 7), 16);
+    return [n >> 16, n >> 8 & 255, n & 255];
+  }
+  var hex2 = (v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0");
+  var rgbHex = (r, g, b) => "#" + hex2(r) + hex2(g) + hex2(b);
+  function shade(h, k) {
+    const [r, g, b] = hexRgb(h);
+    return k >= 0 ? rgbHex(r + (255 - r) * k, g + (255 - g) * k, b + (255 - b) * k) : rgbHex(r * (1 + k), g * (1 + k), b * (1 + k));
+  }
+  function rgba(h, a) {
+    const [r, g, b] = hexRgb(h);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+  function mixHex(a, b, k) {
+    const x = hexRgb(a), y = hexRgb(b);
+    return rgbHex(lerp(x[0], y[0], k), lerp(x[1], y[1], k), lerp(x[2], y[2], k));
+  }
+  var isHex = (s) => typeof s === "string" && /^#[0-9a-f]{6}$/i.test(s);
+
+  // src/blocks/common.ts
+  var ENTER = 0.55;
+  function enter(cues, id, t, dur = ENTER) {
+    const a = cues.appear(id);
+    if (a === -Infinity) return 1;
+    if (!Number.isFinite(a)) return 0;
+    return clamp01((t - a) / dur);
+  }
+  var pop = (k) => k <= 0 ? 0 : easeOutBack(k);
+  var fade = (k) => easeOutCubic(k);
+  function labelMetrics(size, subSize) {
+    return { padX: Math.round(size * 0.34), padY: Math.round(size * 0.24), pitch: size * 1.02, subPitch: subSize * 1.08 };
+  }
+  function labelSize(theme, lines, sub, size, subSize) {
+    const m = labelMetrics(size, subSize);
+    const w = Math.max(...lines.map((l) => textWidth(theme, l, size)), sub ? textWidth(theme, sub, subSize) : 0) + 2 * m.padX;
+    const h = 2 * m.padY + lines.length * m.pitch + (sub ? m.subPitch : 0);
+    return { w, h };
+  }
+  function placeLabel(theme, opts) {
+    const size = opts.size ?? theme.type.label, subSize = opts.subSize ?? theme.type.sub;
+    const { w, h } = labelSize(theme, opts.lines, opts.sub, size, subSize);
+    const a = opts.anchor, g = opts.gap ?? 12, cx = (a[0] + a[2]) / 2, cy = (a[1] + a[3]) / 2;
+    let box;
+    switch (opts.side ?? "below") {
+      case "above":
+        box = [cx - w / 2, a[1] - g - h, cx + w / 2, a[1] - g];
+        break;
+      case "left":
+        box = [a[0] - g - w, cy - h / 2, a[0] - g, cy + h / 2];
+        break;
+      case "right":
+        box = [a[2] + g, cy - h / 2, a[2] + g + w, cy + h / 2];
+        break;
+      default:
+        box = [cx - w / 2, a[3] + g, cx + w / 2, a[3] + g + h];
+    }
+    return { kind: "label", id: opts.id, owner: opts.owner, alpha: 1, z: opts.z ?? 50, box, lines: opts.lines, sub: opts.sub, size, subSize, color: opts.color, fill: opts.fill ?? "dark", pulse: 0, scale: 1 };
+  }
+  var Props = class {
+    spec;
+    where;
+    problems;
+    theme;
+    constructor(spec, where, problems, theme) {
+      this.spec = spec;
+      this.where = where;
+      this.problems = problems;
+      this.theme = theme;
+    }
+    fail(msg) {
+      this.problems.push(`${this.where}: ${msg}`);
+    }
+    text(s, what, maxWords = 4) {
+      if (typeof s !== "string" || !s.trim()) {
+        this.fail(`${what} must be a non-empty string`);
+        return "?";
+      }
+      const bad = unsupportedChars(this.theme, s);
+      if (bad.length) this.fail(`${what} "${s}" has characters not in the font: ${bad.join(" ")} -> use plain ASCII`);
+      if (s.trim().split(/\s+/).length > maxWords) this.fail(`${what} "${s}" has more than ${maxWords} words -> shorten it or move detail into "sub"`);
+      return s;
+    }
+    role(r, what, fallback) {
+      if (r === void 0) return fallback;
+      if (typeof r !== "string" || !(r in this.theme.roles)) {
+        this.fail(`${what} "${String(r)}" is not a theme role (${Object.keys(this.theme.roles).join(", ")})`);
+        return fallback;
+      }
+      return r;
+    }
+    num(v, what, fallback, min = -Infinity, max = Infinity) {
+      if (v === void 0) return fallback;
+      if (typeof v !== "number" || !Number.isFinite(v) || v < min || v > max) {
+        this.fail(`${what} must be a number from ${min} to ${max}`);
+        return fallback;
+      }
+      return v;
+    }
+    oneOf(v, what, options, fallback) {
+      if (v === void 0) return fallback;
+      if (!options.includes(v)) {
+        this.fail(`${what} must be one of ${options.join(", ")}`);
+        return fallback;
+      }
+      return v;
+    }
+    list(v, what) {
+      if (!Array.isArray(v) || !v.length) {
+        this.fail(`${what} must be a non-empty array`);
+        return [];
+      }
+      return v;
+    }
+    id(v, what) {
+      if (typeof v !== "string" || !/^[A-Za-z][A-Za-z0-9_-]*$/.test(v)) {
+        this.fail(`${what} must be an id (letters, digits, - and _)`);
+        return "?";
+      }
+      return v;
+    }
+  };
+  function labelLines(p, v, what) {
+    if (Array.isArray(v)) return v.map((s, i) => p.text(s, `${what}[${i}]`, 3));
+    return [p.text(v, what, 3)];
+  }
+
+  // src/blocks/network-map.ts
+  var ZONE_PAD = 16;
+  var HEADER = 54;
+  var SIDES = ["below", "above", "left", "right"];
+  function nodeBox(x, y, hw, h, scale = 1) {
+    return [x - hw * scale, y - (h + hw * ISO) * scale, x + hw * scale, y + hw * ISO * scale + 4];
+  }
+  var nodeCenter = (n, scale = 1) => [n.x, n.y - n.h * scale / 2];
+  var networkMap = {
+    type: "network-map",
+    describe: "Zones (internet, VPC, data center, subnets) holding isometric nodes (servers, gateways, routers, VPCs) joined by links or encrypted tunnels; packets can travel along routes.",
+    build(spec, { theme, slot, problems }) {
+      const p = new Props(spec, `block "${spec.id}"`, problems, theme);
+      const zones = [], zoneById = /* @__PURE__ */ new Map();
+      function layoutZones(list, box, dir, depth, parentRole) {
+        const items = list.map((z, i) => ({ z, size: p.num(z.size, `zones[${i}].size`, 1, 0.1, 10) }));
+        const total = items.reduce((a, it) => a + it.size, 0), gap = 18;
+        const span = (dir === "row" ? box[2] - box[0] : box[3] - box[1]) - gap * (items.length - 1);
+        let at = dir === "row" ? box[0] : box[1];
+        return items.map(({ z, size }, i) => {
+          const len = span * size / total;
+          const b = dir === "row" ? [at, box[1], at + len, box[3]] : [box[0], at, box[2], at + len];
+          at += len + gap;
+          const id = p.id(z.id, `zones[${i}].id`);
+          const role = p.oneOf(z.role, `zone "${id}" role`, ["external", "boundary", "public", "private", "neutral", "aws", "onprem"], "neutral");
+          if (parentRole && role === parentRole) p.fail(`zone "${id}" uses the same role as its parent -> give it a different role so it stands out`);
+          const zone2 = { id, label: p.text(z.label, `zone "${id}" label`, 4), role, size, box: b, inner: b, depth, dashed: role === "boundary", children: [] };
+          const kids = Array.isArray(z.children) ? z.children : [];
+          zone2.inner = inset(b, ZONE_PAD);
+          zone2.inner[1] = b[1] + HEADER;
+          if (kids.length) zone2.children = layoutZones(kids, zone2.inner, p.oneOf(z.direction, `zone "${id}" direction`, ["row", "column"], "column"), depth + 1, role);
+          if (b[3] - b[1] < HEADER + 60) p.fail(`zone "${id}" is only ${Math.round(b[3] - b[1])} px tall -> raise its "size" or use fewer zones`);
+          if (b[2] - b[0] < 160) p.fail(`zone "${id}" is only ${Math.round(b[2] - b[0])} px wide -> raise its "size" or stack zones in a column`);
+          if (zoneById.has(id)) p.fail(`zone id "${id}" is used twice`);
+          zoneById.set(id, zone2);
+          zones.push(zone2);
+          return zone2;
+        });
+      }
+      layoutZones(Array.isArray(spec.zones) ? spec.zones : [], slot, p.oneOf(spec.direction, "direction", ["row", "column"], "column"), 0, null);
+      const nodes = [], nodeById = /* @__PURE__ */ new Map();
+      p.list(spec.nodes, "nodes").forEach((n, i) => {
+        const id = p.id(n.id, `nodes[${i}].id`);
+        const type = p.oneOf(n.type, `node "${id}" type`, Object.keys(theme.nodeSizes), "server");
+        const zone2 = typeof n.zone === "string" ? zoneById.get(n.zone) : void 0;
+        const area = zone2 ? zone2.inner : slot;
+        if (n.zone !== void 0 && !zone2) p.fail(`node "${id}" names zone "${String(n.zone)}" which does not exist`);
+        const fx = p.num(n.x, `node "${id}" x`, 0.5, 0, 1), fy = p.num(n.y, `node "${id}" y`, 0.6, 0, 1);
+        const { hw, h } = theme.nodeSizes[type];
+        let x = area[0] + (area[2] - area[0]) * fx, y = area[1] + (area[3] - area[1]) * fy;
+        const edge = n.edge === void 0 ? void 0 : p.oneOf(n.edge, `node "${id}" edge`, ["top", "bottom", "left", "right"], "top");
+        if (edge && !zone2) p.fail(`node "${id}" sets "edge" but has no "zone" -> name the zone whose edge it sits on`);
+        if (edge && zone2) {
+          if (edge === "top") y = zone2.box[1] + h / 2;
+          if (edge === "bottom") y = zone2.box[3] + h / 2;
+          if (edge === "left") x = zone2.box[0];
+          if (edge === "right") x = zone2.box[2];
+        }
+        const role = p.role(n.role, `node "${id}" role`, ["gateway", "vpngw", "router", "firewall"].includes(type) ? "gateway" : zone2 ? zone2.role === "boundary" ? "boundary" : zone2.role : "external");
+        const node2 = { id, type, role, x, y, hw, h, lines: labelLines(p, n.label, `node "${id}" label`), sub: n.sub === void 0 ? void 0 : p.text(n.sub, `node "${id}" sub`, 4), side: p.oneOf(n.side, `node "${id}" side`, SIDES, "below"), box: nodeBox(x, y, hw, h) };
+        if (nodeById.has(id) || zoneById.has(id)) p.fail(`id "${id}" is used twice`);
+        nodes.push(node2);
+        nodeById.set(id, node2);
+      });
+      const links = [];
+      (Array.isArray(spec.links) ? spec.links : []).forEach((l, i) => {
+        const a = nodeById.get(String(l.from)), b = nodeById.get(String(l.to));
+        if (!a || !b) {
+          p.fail(`links[${i}] joins "${String(l.from)}" and "${String(l.to)}" but both must be node ids`);
+          return;
+        }
+        if (links.some((x) => x.from === a.id && x.to === b.id || x.from === b.id && x.to === a.id)) p.fail(`links[${i}]: "${a.id}" and "${b.id}" are already linked -> keep one link per pair (use style "tunnel" for an encrypted one)`);
+        const id = l.id === void 0 ? `${a.id}-${b.id}` : p.id(l.id, `links[${i}].id`);
+        const style = p.oneOf(l.style, `link "${id}" style`, ["line", "tunnel"], "line");
+        const bend = p.oneOf(l.bend, `link "${id}" bend`, ["direct", "hv", "vh"], "direct");
+        const A = nodeCenter(a), B = nodeCenter(b);
+        const pts = bend === "direct" || Math.abs(A[0] - B[0]) < 4 || Math.abs(A[1] - B[1]) < 4 ? [A, B] : bend === "hv" ? [A, [B[0], A[1]], B] : [A, [A[0], B[1]], B];
+        for (const o of nodes) {
+          if (o === a || o === b) continue;
+          for (let s = 1; s < pts.length; s++) if (segHitsBox(pts[s - 1], pts[s], inset(o.box, -6))) {
+            p.fail(`the link between "${a.id}" and "${b.id}" would pass through "${o.id}" -> move one of them with x/y, change "bend", or route the traffic through "${o.id}"`);
+            s = pts.length;
+          }
+        }
+        links.push({ id, from: a.id, to: b.id, style, dashed: l.dashed === true, color: theme.roles[p.role(l.color, `link "${id}" color`, style === "tunnel" ? "response" : "neutral")], pts });
+      });
+      const labelOf = (n) => placeLabel(theme, { id: `${n.id}:label`, owner: n.id, lines: n.lines, sub: n.sub, color: theme.roles[n.role], anchor: n.box, side: n.side });
+      for (const n of nodes) {
+        const L = labelOf(n);
+        const hit = nodes.find((o) => o !== n && inter(L.box, inset(o.box, -4)));
+        if (hit) p.fail(`the label of "${n.id}" covers "${hit.id}" -> set "side" on "${n.id}" to one of ${SIDES.filter((s) => s !== n.side).join(", ")}, or move it`);
+      }
+      for (const z of zones) if (z.depth > 0) {
+        const { w } = labelSize(theme, [z.label], void 0, theme.type.sub, theme.type.sub);
+        if (w > z.box[2] - z.box[0] - 24) p.fail(`zone label "${z.label}" is wider than its zone -> shorten it`);
+      }
+      const linkAppear = (cues, l) => cues.mentioned(l.id) ? cues.appear(l.id) : Math.max(cues.appear(l.from), cues.appear(l.to)) + 0.25;
+      return {
+        ids: [...zones.map((z) => z.id), ...nodes.map((n) => n.id), ...links.map((l) => l.id)],
+        frame(t, cues) {
+          const out = [];
+          for (const z of zones) {
+            const k = enter(cues, z.id, t, 0.8);
+            if (k <= 0) continue;
+            out.push({ kind: "zone", id: z.id, owner: z.id, alpha: fade(Math.min(1, k * 1.6)), z: z.depth, box: z.box, fill: theme.zoneFill[z.role], edge: z.role === "boundary" ? theme.roles.boundary : theme.roles[z.role], dashed: z.dashed, progress: fade(k), lip: 10 });
+            const sz = theme.type.sub, L = placeLabel(theme, { id: `${z.id}:label`, owner: z.id, lines: [z.label], color: theme.roles[z.role], anchor: [z.box[0] + 12, z.box[1] + 10, z.box[0] + 12, z.box[1] + 10], side: "right", gap: 0, size: sz, subSize: sz, fill: "solid", z: 40 });
+            const h = L.box[3] - L.box[1];
+            L.box = [L.box[0], z.box[1] + 10, L.box[2], z.box[1] + 10 + h];
+            L.alpha = fade(k);
+            out.push(L);
+          }
+          for (const l of links) {
+            const a = linkAppear(cues, l), k = a === -Infinity ? 1 : Math.max(0, Math.min(1, (t - a) / 0.6));
+            if (k <= 0) continue;
+            out.push({ kind: "link", id: l.id, owner: l.id, alpha: 1, z: 20, pts: l.pts, color: l.color, width: l.style === "tunnel" ? 5 : 4.5, dashed: l.dashed, style: l.style, progress: fade(k), ends: [l.from, l.to] });
+          }
+          for (const n of nodes) {
+            const k = enter(cues, n.id, t, ENTER);
+            if (k <= 0) continue;
+            const pulse = cues.pulse(n.id, t);
+            out.push({ kind: "node", id: n.id, owner: n.id, alpha: fade(Math.min(1, k * 2)), z: 30 + n.y / 1e4, type: n.type, x: n.x, y: n.y, scale: pop(k), color: theme.roles[n.role], glow: pulse });
+            const L = labelOf(n);
+            L.alpha = fade(Math.max(0, (k - 0.3) / 0.7));
+            L.pulse = pulse;
+            out.push(L);
+          }
+          return out;
+        },
+        route(ids) {
+          if (!nodeById.has(ids[0])) return null;
+          const pts = [], stops = [];
+          for (let i = 0; i < ids.length; i++) {
+            const n = nodeById.get(ids[i]);
+            if (!n) return `"${ids[i]}" is not a node of block "${spec.id}"`;
+            if (i === 0) {
+              pts.push(nodeCenter(n));
+              stops.push(0);
+              continue;
+            }
+            const prev = ids[i - 1];
+            const l = links.find((x) => x.from === prev && x.to === n.id || x.to === prev && x.from === n.id);
+            const seg = l ? l.from === prev ? l.pts : [...l.pts].reverse() : [nodeCenter(nodeById.get(prev)), nodeCenter(n)];
+            pts.push(...seg.slice(1));
+            stops.push(pts.length - 1);
+          }
+          return { pts, stops };
+        },
+        anchor(id) {
+          const n = nodeById.get(id);
+          if (n) {
+            const c = nodeCenter(n);
+            return { x: c[0], y: c[1], r: n.hw + 8 };
+          }
+          const z = zoneById.get(id);
+          if (z) {
+            const c = boxCenter(z.box);
+            return { x: c[0], y: c[1], r: Math.min(z.box[2] - z.box[0], z.box[3] - z.box[1]) / 2 };
+          }
+          return null;
+        }
+      };
+    }
+  };
+
+  // src/blocks/mesh-graph.ts
+  var meshGraph = {
+    type: "mesh-graph",
+    describe: 'Many identical nodes (VPCs, services) on a circle: "mesh" links every pair to show how connections explode, "hub" attaches all of them to one central node.',
+    build(spec, { theme, slot, problems }) {
+      const p = new Props(spec, `block "${spec.id}"`, problems, theme);
+      const id = p.id(spec.id, "id");
+      const mode = p.oneOf(spec.mode, "mode", ["mesh", "hub"], "mesh");
+      const count = Math.round(p.num(spec.count, "count", 8, 3, 40));
+      const type = p.oneOf(spec.nodeType, "nodeType", Object.keys(theme.nodeSizes), "vpc");
+      const role = p.role(spec.role, "role", "public");
+      const prefix = typeof spec.prefix === "string" ? spec.prefix : "n";
+      const named = Array.isArray(spec.named) ? spec.named : [];
+      const extras = Array.isArray(spec.extras) ? spec.extras : [];
+      if (named.length > count) p.fail(`"named" lists ${named.length} nodes but count is ${count}`);
+      const [cx, cy] = boxCenter(slot);
+      const gapDeg = extras.length ? p.num(spec.gap, "gap", 70, 0, 180) : 0;
+      const R = Math.min(slot[2] - slot[0], slot[3] - slot[1]) / 2 - p.num(spec.margin, "margin", 90, 0, 400);
+      const scale = p.num(spec.nodeScale, "nodeScale", count > 12 ? 0.6 : 0.85, 0.3, 1.5);
+      const gap = gapDeg * Math.PI / 180;
+      const angleOf = (i) => {
+        if (!gap) return -Math.PI / 2 + 2 * Math.PI * i / count;
+        const rank = (i + Math.floor(count / 2)) % count, span = 2 * Math.PI - gap;
+        return Math.PI / 2 + gap / 2 + span * (rank + 0.5) / count;
+      };
+      const slotIds = Array(count).fill(null);
+      named.forEach((nm, i) => {
+        const at = Math.round(p.num(nm.at, `named[${i}].at`, i, 0, count - 1));
+        if (slotIds[at]) p.fail(`named[${i}] uses position ${at}, which is already taken`);
+        slotIds[at] = nm;
+      });
+      const nodes = [];
+      for (let i = 0; i < count; i++) {
+        const a = angleOf(i), nm = slotIds[i];
+        const nid = nm ? p.id(nm.id, `named node id`) : `${prefix}${i + 1}`;
+        const { hw, h } = theme.nodeSizes[type];
+        const x = cx + R * Math.cos(a), y = cy + R * Math.sin(a) + h * scale / 2;
+        nodes.push({ id: nid, type, role, x, y, hw, h, scale, lines: nm ? labelLines(p, nm.label, `named node "${nid}" label`) : void 0, sub: nm && nm.sub !== void 0 ? p.text(nm.sub, `named node "${nid}" sub`) : void 0, side: nm && typeof nm.side === "string" ? nm.side : "radial", angle: a });
+      }
+      extras.forEach((e, i) => {
+        const eid = p.id(e.id, `extras[${i}].id`), et = p.oneOf(e.type, `extra "${eid}" type`, Object.keys(theme.nodeSizes), "datacenter");
+        const a = Math.PI / 2 + (extras.length > 1 ? (i / (extras.length - 1) - 0.5) * (gapDeg * 0.6) * Math.PI / 180 : 0);
+        const { hw, h } = theme.nodeSizes[et];
+        nodes.push({ id: eid, type: et, role: p.role(e.role, `extra "${eid}" role`, "onprem"), x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) + h * 0.85 / 2, hw, h, scale: 0.85, lines: labelLines(p, e.label, `extra "${eid}" label`), sub: e.sub === void 0 ? void 0 : p.text(e.sub, `extra "${eid}" sub`), side: e.side ?? "below" });
+      });
+      let hub = null;
+      if (mode === "hub") {
+        const h0 = spec.hub ?? {};
+        const ht = p.oneOf(h0.type, "hub.type", Object.keys(theme.nodeSizes), "router");
+        const { hw, h } = theme.nodeSizes[ht];
+        hub = { id: p.id(h0.id, "hub.id"), type: ht, role: p.role(h0.role, "hub.role", "gateway"), x: cx, y: cy + h / 2, hw, h, scale: 1.2, lines: labelLines(p, h0.label, "hub.label"), sub: h0.sub === void 0 ? void 0 : p.text(h0.sub, "hub.sub"), side: h0.side ?? "below" };
+      }
+      const all = hub ? [hub, ...nodes] : nodes;
+      const boxOf = (n) => nodeBox(n.x, n.y, n.hw, n.h, n.scale);
+      const centerOf = (n) => nodeCenter(n, n.scale);
+      const byId = new Map(all.map((n) => [n.id, n]));
+      const radialLabel = (n) => {
+        const L = placeLabel(theme, { id: `${n.id}:label`, owner: n.id, lines: n.lines, sub: n.sub, color: theme.roles[n.role], anchor: boxOf(n) });
+        const w = L.box[2] - L.box[0], h = L.box[3] - L.box[1], ux = Math.cos(n.angle), uy = Math.sin(n.angle);
+        const [nx, ny] = centerOf(n), reach = (n.hw + 10) * n.scale + (Math.abs(ux) * w + Math.abs(uy) * h) / 2;
+        const lx = nx + ux * reach, ly = ny + uy * reach;
+        L.box = [lx - w / 2, ly - h / 2, lx + w / 2, ly + h / 2];
+        return L;
+      };
+      const links = [];
+      const ring = nodes.slice(0, count);
+      if (mode === "mesh") {
+        let k = 0;
+        for (let i = 0; i < ring.length; i++) for (let j = i + 1; j < ring.length; j++) links.push({ id: `${id}:${ring[i].id}-${ring[j].id}`, a: ring[i], b: ring[j], order: k++, tunnel: false });
+      } else if (hub) {
+        nodes.forEach((n, i) => links.push({ id: `${hub.id}-${n.id}`, a: hub, b: n, order: i, tunnel: i >= count }));
+      }
+      const drawWindow = p.num(spec.drawTime, "drawTime", mode === "mesh" ? 3 : 1.6, 0.2, 10);
+      const linkColor = theme.roles[p.role(spec.linkColor, "linkColor", mode === "mesh" ? "public" : "gateway")];
+      return {
+        ids: [id, ...all.map((n) => n.id), ...links.filter((l) => l.tunnel).map((l) => l.id)],
+        frame(t, cues) {
+          const out = [];
+          const base = cues.appear(id) === -Infinity ? 0 : cues.appear(id);
+          for (const l of links) {
+            const ends = Math.max(cues.appear(l.a.id), cues.appear(l.b.id));
+            const a0 = cues.mentioned(l.id) ? cues.appear(l.id) : cues.carried(l.id) || ends === -Infinity && cues.carried(id) ? -Infinity : Math.max(base, ends) + 0.3 + drawWindow * l.order / Math.max(1, links.length);
+            const k = Math.max(0, Math.min(1, (t - a0) / (mode === "mesh" ? 0.5 : 0.6)));
+            if (k <= 0) continue;
+            out.push({ kind: "link", id: l.id, owner: l.tunnel ? l.id : id, alpha: mode === "mesh" ? 0.75 : 1, z: 20, pts: [centerOf(l.a), centerOf(l.b)], color: l.tunnel ? theme.roles.response : linkColor, width: mode === "mesh" ? 2 : 4.5, dashed: false, style: l.tunnel ? "tunnel" : "line", progress: fade(k), ends: [l.a.id, l.b.id], mayCross: mode === "mesh" });
+          }
+          for (const [i, n] of all.entries()) {
+            const own = cues.mentioned(n.id) || cues.carried(n.id) ? enter(cues, n.id, t) : Math.max(0, Math.min(1, (t - base - 0.04 * i) / ENTER));
+            if (own <= 0) continue;
+            const pulse = cues.pulse(n.id, t);
+            out.push({ kind: "node", id: n.id, owner: n.id, alpha: fade(Math.min(1, own * 2)), z: 30 + n.y / 1e4, type: n.type, x: n.x, y: n.y, scale: n.scale * pop(own), color: theme.roles[n.role], glow: pulse });
+            if (n.lines) {
+              const L = n.side === "radial" ? radialLabel(n) : placeLabel(theme, { id: `${n.id}:label`, owner: n.id, lines: n.lines, sub: n.sub, color: theme.roles[n.role], anchor: boxOf(n), side: n.side, gap: 8 });
+              L.alpha = fade(Math.max(0, (own - 0.3) / 0.7));
+              L.pulse = pulse;
+              out.push(L);
+            }
+          }
+          return out;
+        },
+        route(ids) {
+          if (!byId.has(ids[0])) return null;
+          const pts = [], stops = [];
+          for (const nid of ids) {
+            const n = byId.get(nid);
+            if (!n) return `"${nid}" is not a node of block "${id}"`;
+            pts.push(centerOf(n));
+            stops.push(pts.length - 1);
+          }
+          return { pts, stops };
+        },
+        anchor(nid) {
+          const n = byId.get(nid);
+          if (!n) return null;
+          const c = centerOf(n);
+          return { x: c[0], y: c[1], r: (n.hw + 8) * n.scale };
+        }
+      };
+    }
+  };
+
+  // src/blocks/stat-counter.ts
+  var statCounter = {
+    type: "stat-counter",
+    describe: 'A big number that counts between values (e.g. "190" connections to "20"), with a short label under it.',
+    build(spec, { theme, slot, problems }) {
+      const p = new Props(spec, `block "${spec.id}"`, problems, theme);
+      const id = p.id(spec.id, "id");
+      const value = p.num(spec.value, "value", 0);
+      const label2 = p.text(spec.label, "label", 4);
+      const role = p.role(spec.role, "role", "gateway");
+      const size = Math.min(theme.type.stat, (slot[3] - slot[1]) * 0.62);
+      const labelSz = theme.type.sub;
+      const [cx, cy] = boxCenter(slot);
+      const textBox = (s, sz, y) => {
+        const { w } = labelSize(theme, [s], void 0, sz, sz);
+        return [cx - w / 2, y, cx + w / 2, y + sz * 1.05];
+      };
+      if (size < 60) p.fail(`slot is only ${Math.round(slot[3] - slot[1])} px tall for a stat counter -> use a layout with a taller "stat" slot`);
+      return {
+        ids: [id],
+        frame(t, cues) {
+          const k = enter(cues, id, t, 0.5);
+          if (k <= 0) return [];
+          const v = cues.value(id, t), from = v.from ?? value, to = v.value ?? value;
+          const n = Math.round(lerp(from, to, easeInOutCubic(v.k)));
+          const lab = v.label ?? label2, top = cy - (size + labelSz * 1.2) / 2;
+          const out = [
+            { kind: "text", id: `${id}:value`, owner: id, alpha: fade(k), z: 60, box: textBox(String(n), size, top), text: String(n), size, color: theme.roles[role], align: "center" },
+            { kind: "text", id: `${id}:label`, owner: id, alpha: fade(k), z: 60, box: textBox(lab, labelSz, top + size * 1.05 + 4), text: lab, size: labelSz, color: theme.paper, align: "center" }
+          ];
+          return out;
+        }
+      };
+    }
+  };
+
+  // src/blocks/summary-cards.ts
+  var summaryCards = {
+    type: "summary-cards",
+    describe: "A stack of 2 to 4 takeaway cards (icon + title + short sentence), revealed one by one.",
+    build(spec, { theme, slot, problems }) {
+      const p = new Props(spec, `block "${spec.id}"`, problems, theme);
+      const id = p.id(spec.id, "id");
+      const gap = 22, list = p.list(spec.cards, "cards");
+      if (list.length > 4) p.fail("more than 4 cards -> split the takeaway into two scenes");
+      const cardH = (slot[3] - slot[1] - gap * (list.length - 1)) / Math.max(1, list.length);
+      const iconW = 150, padX = 26, titleSz = theme.type.label, bodySz = Math.max(theme.type.minPx + 4, theme.type.text - 4);
+      const cards = list.map((c, i) => {
+        const cid = p.id(c.id, `cards[${i}].id`);
+        const role = p.role(c.role, `card "${cid}" role`, "public");
+        const title = p.text(c.title, `card "${cid}" title`, 3);
+        const textW = slot[2] - slot[0] - iconW - 2 * padX;
+        const body = typeof c.text === "string" ? wrap(theme, c.text, bodySz, textW) : [];
+        const bad = [...typeof c.text === "string" ? c.text : ""].filter((ch) => !(ch in theme.font.adv));
+        if (bad.length) p.fail(`card "${cid}" text has characters not in the font: ${[...new Set(bad)].join(" ")}`);
+        const need = titleSz * 1.2 + body.length * bodySz * 1.15 + 30;
+        if (need > cardH) p.fail(`card "${cid}" text needs ${Math.round(need)} px but cards are ${Math.round(cardH)} px tall -> shorten "text"`);
+        const y0 = slot[1] + i * (cardH + gap), box = [slot[0], y0, slot[2], y0 + cardH];
+        const ic = c.icon ?? {};
+        const itype = p.oneOf(ic.type, `card "${cid}" icon.type`, Object.keys(theme.nodeSizes), "server");
+        return { id: cid, role, title, body, box, icon: { id: typeof ic.id === "string" ? ic.id : `${cid}:icon`, type: itype } };
+      });
+      return {
+        ids: [id, ...cards.map((c) => c.id), ...cards.map((c) => c.icon.id)],
+        frame(t, cues) {
+          const out = [];
+          const base = cues.appear(id) === -Infinity ? 0 : cues.appear(id);
+          cards.forEach((c, i) => {
+            const named = cues.mentioned(c.id) ? c.id : cues.mentioned(c.icon.id) && !cues.carried(c.icon.id) ? c.icon.id : null;
+            const k = named ? enter(cues, named, t) : Math.max(0, Math.min(1, (t - base - 0.5 * i) / 0.55));
+            const iconK = cues.carried(c.icon.id) ? 1 : k;
+            if (iconK <= 0) return;
+            const color = theme.roles[c.role], a = fade(k), [x0, y0, x1, y1] = c.box;
+            const { hw, h } = theme.nodeSizes[c.icon.type], s = Math.min(1.4, (y1 - y0) * 0.55 / (h + hw * 0.6));
+            out.push({ kind: "node", id: c.icon.id, owner: c.id, alpha: fade(iconK), z: 58, type: c.icon.type, x: x0 + iconW / 2, y: (y0 + y1) / 2 + h * s / 2, scale: s * pop(iconK), color, glow: cues.pulse(c.id, t) });
+            if (k <= 0) return;
+            out.push({ kind: "panel", id: `${c.id}:card`, owner: c.id, alpha: a, z: 55, box: c.box, fill: "#0a2350", stroke: color, strokeWidth: 3, radius: 14 });
+            const tx = x0 + iconW + padX, blockH = titleSz * 1.2 + c.body.length * bodySz * 1.15, ty = (y0 + y1) / 2 - blockH / 2;
+            out.push({ kind: "text", id: `${c.id}:title`, owner: c.id, alpha: a, z: 60, box: [tx, ty, tx + textWidth(theme, c.title, titleSz), ty + titleSz * 1.05], text: c.title, size: titleSz, color, align: "left" });
+            c.body.forEach((line, j) => {
+              const ly = ty + titleSz * 1.2 + j * bodySz * 1.15;
+              out.push({ kind: "text", id: `${c.id}:body${j}`, owner: c.id, alpha: a, z: 60, box: [tx, ly, tx + textWidth(theme, line, bodySz), ly + bodySz * 1.05], text: line, size: bodySz, color: theme.paper, align: "left" });
+            });
+          });
+          return out;
+        }
+      };
+    }
+  };
+
+  // src/blocks/table.ts
+  var table = {
+    type: "table",
+    describe: "A titled table with a header row; each row has an id so beats can pulse it (for example the route a packet matches).",
+    build(spec, { theme, slot, problems }) {
+      const p = new Props(spec, `block "${spec.id}"`, problems, theme);
+      const id = p.id(spec.id, "id");
+      const title = spec.title === void 0 ? void 0 : p.text(spec.title, "title", 4);
+      const columns = p.list(spec.columns, "columns").map((c, i) => p.text(c, `columns[${i}]`, 3));
+      const rows2 = p.list(spec.rows, "rows").map((r, i) => {
+        const cells = Array.isArray(r.cells) ? r.cells.map((c, j) => p.text(c, `rows[${i}].cells[${j}]`, 3)) : [];
+        if (cells.length !== columns.length) p.fail(`rows[${i}] has ${cells.length} cells but there are ${columns.length} columns`);
+        return { id: p.id(r.id, `rows[${i}].id`), cells };
+      });
+      const role = p.role(spec.role, "role", "gateway");
+      const accent = theme.roles[role];
+      const titleH = title ? 56 : 0, n = rows2.length + 1;
+      const rowH = Math.min(64, (slot[3] - slot[1] - titleH) / n);
+      const size = Math.min(theme.type.text, rowH * 0.58);
+      const w = slot[2] - slot[0], padX = 20;
+      const widest = columns.map((c, j) => Math.max(textWidth(theme, c, size), ...rows2.map((r) => textWidth(theme, r.cells[j] ?? "", size))) + 2 * padX);
+      const need = widest.reduce((a, b) => a + b, 0);
+      if (need > w) p.fail(`table is ${Math.round(need)} px wide but the slot is ${Math.round(w)} px -> shorten cells or use a wider slot`);
+      const extra = Math.max(0, w - need) / columns.length;
+      const colX = [];
+      let x = slot[0];
+      for (const cw of widest) {
+        colX.push(x);
+        x += cw + extra;
+      }
+      const top = slot[1] + titleH;
+      if (size < theme.type.minPx) p.fail(`table rows are too short for readable text -> use fewer rows or a taller slot`);
+      return {
+        ids: [id, ...rows2.map((r) => r.id)],
+        frame(t, cues) {
+          const k = enter(cues, id, t, 0.5);
+          if (k <= 0) return [];
+          const out = [];
+          if (title) out.push({ kind: "text", id: `${id}:title`, owner: id, alpha: fade(k), z: 60, box: [slot[0], slot[1], slot[0] + textWidth(theme, title, theme.type.sub), slot[1] + theme.type.sub * 1.05], text: title, size: theme.type.sub, color: accent, align: "left" });
+          const row = (rid, cells, i, header) => {
+            const base = cues.appear(id) === -Infinity ? -9 : cues.appear(id);
+            const rk = header ? k : cues.mentioned(rid) ? enter(cues, rid, t, 0.4) : Math.max(0, Math.min(1, (t - base - 0.3 - 0.12 * i) / 0.4));
+            if (rk <= 0) return;
+            const y0 = top + i * rowH, box = [slot[0], y0 + 3, slot[2], y0 + rowH - 3];
+            const hot = header ? 0 : cues.pulse(rid, t);
+            out.push({ kind: "panel", id: `${rid}:row`, owner: header ? id : rid, alpha: fade(rk), z: 55, box, fill: header ? accent : mixHex("#0a2350", accent, 0.12 + 0.5 * hot), stroke: header ? accent : mixHex("#2b4c86", accent, hot), strokeWidth: 2 + 2 * hot, radius: 8 });
+            cells.forEach((c, j) => out.push({ kind: "text", id: `${rid}:c${j}`, owner: header ? id : rid, alpha: fade(rk), z: 60, box: [colX[j] + padX, y0 + (rowH - size) / 2, colX[j] + padX + textWidth(theme, c, size), y0 + (rowH + size) / 2], text: c, size, color: header ? theme.ink : theme.paper, align: "left" }));
+          };
+          row(`${id}:head`, columns, 0, true);
+          rows2.forEach((r, i) => row(r.id, r.cells, i + 1, false));
+          return out;
+        }
+      };
+    }
+  };
+
+  // src/blocks/index.ts
+  var BLOCKS = Object.fromEntries(
+    [networkMap, meshGraph, statCounter, table, summaryCards].map((b) => [b.type, b])
+  );
+
+  // src/theme/blueprint.ts
+  var ADV = { " ": 0.2, "!": 0.279, '"': 0.346, "#": 0.616, "$": 0.444, "%": 0.766, "&": 0.603, "'": 0.17, "(": 0.311, ")": 0.311, "*": 0.361, "+": 0.438, ",": 0.211, "-": 0.331, ".": 0.223, "/": 0.415, "0": 0.453, "1": 0.284, "2": 0.438, "3": 0.436, "4": 0.484, "5": 0.439, "6": 0.44, "7": 0.407, "8": 0.44, "9": 0.435, ":": 0.275, ";": 0.232, "<": 0.438, "=": 0.438, ">": 0.438, "?": 0.437, "@": 0.759, "A": 0.482, "B": 0.47, "C": 0.464, "D": 0.476, "E": 0.438, "F": 0.421, "G": 0.467, "H": 0.48, "I": 0.23, "J": 0.452, "K": 0.491, "L": 0.426, "M": 0.548, "N": 0.514, "O": 0.473, "P": 0.465, "Q": 0.461, "R": 0.471, "S": 0.444, "T": 0.468, "U": 0.479, "V": 0.488, "W": 0.689, "X": 0.475, "Y": 0.474, "Z": 0.412, "[": 0.345, "\\": 0.415, "]": 0.345, "^": 0.422, "_": 0.421, "`": 0.22, "a": 0.446, "b": 0.445, "c": 0.434, "d": 0.445, "e": 0.436, "f": 0.298, "g": 0.441, "h": 0.447, "i": 0.219, "j": 0.217, "k": 0.449, "l": 0.209, "m": 0.675, "n": 0.447, "o": 0.442, "p": 0.448, "q": 0.448, "r": 0.324, "s": 0.412, "t": 0.291, "u": 0.447, "v": 0.436, "w": 0.613, "x": 0.439, "y": 0.423, "z": 0.373, "{": 0.344, "|": 0.186, "}": 0.344, "~": 0.49 };
+  var blueprint = {
+    name: "blueprint",
+    W: 1080,
+    H: 1280,
+    fullH: 1920,
+    fps: 30,
+    safe: [48, 96, 1032, 1240],
+    captionBox: [48, 104, 1032, 196],
+    content: [48, 222, 1032, 1232],
+    font: { family: "BlueprintCond", stack: 'BlueprintCond, "Arial Narrow", "Roboto Condensed", sans-serif', cap: 0.7, adv: ADV },
+    type: { label: 40, sub: 32, caption: 60, text: 36, stat: 120, minPx: 26 },
+    roles: {
+      gateway: "#ffb020",
+      public: "#22d3ee",
+      private: "#a78bfa",
+      response: "#34d399",
+      blocked: "#ff4d6d",
+      external: "#c9d6ea",
+      boundary: "#f2f7ff",
+      neutral: "#9fb4d6",
+      aws: "#ff9a3c",
+      onprem: "#7dd3fc"
+    },
+    zoneFill: {
+      public: "#0e7898",
+      private: "#30296f",
+      external: "#56698c",
+      boundary: "#1a4d93",
+      neutral: "#2f6aa8",
+      aws: "#5a3a1a",
+      onprem: "#14506e"
+    },
+    ink: "#061633",
+    paper: "#f2f7ff",
+    page: ["#0b2a5b", "#0e3a7a"],
+    wordsPerSecond: 2.6,
+    packetSpeed: 320,
+    transition: 0.9,
+    limits: { maxLabels: 16, maxSpeed: 2600, minCaption: 1.5 },
+    nodeSizes: {
+      server: { hw: 34, h: 34 },
+      gateway: { hw: 44, h: 40 },
+      vpngw: { hw: 40, h: 34 },
+      router: { hw: 50, h: 34 },
+      vpc: { hw: 42, h: 22 },
+      datacenter: { hw: 38, h: 58 },
+      database: { hw: 30, h: 40 },
+      cloud: { hw: 44, h: 30 },
+      users: { hw: 26, h: 56 },
+      firewall: { hw: 40, h: 34 }
+    },
+    dim: { map: 0.4, label: 0.6, zone: 0.55 }
+  };
+  var THEMES = { blueprint };
+
+  // src/runtime/layouts.ts
+  var GAP = 24;
+  function rows(b, shares) {
+    const total = shares.reduce((a, s) => a + s, 0), h = b[3] - b[1] - GAP * (shares.length - 1);
+    let y = b[1];
+    return shares.map((s) => {
+      const box = [b[0], y, b[2], y + h * s / total];
+      y = box[3] + GAP;
+      return box;
+    });
+  }
+  function cols(b, shares) {
+    const total = shares.reduce((a, s) => a + s, 0), w = b[2] - b[0] - GAP * (shares.length - 1);
+    let x = b[0];
+    return shares.map((s) => {
+      const box = [x, b[1], x + w * s / total, b[3]];
+      x = box[2] + GAP;
+      return box;
+    });
+  }
+  var LAYOUTS = {
+    "full": {
+      describe: 'one slot "main" filling the whole content area',
+      slots: (t) => ({ main: t.content })
+    },
+    "focus+aside": {
+      describe: '"main" (upper 60%) and "aside" (lower 40%)',
+      slots: (t) => {
+        const [main, aside] = rows(t.content, [3, 2]);
+        return { main, aside };
+      }
+    },
+    "main+strip": {
+      describe: '"main" (upper 70%) and a "strip" below it, tall enough for a 4-row table',
+      slots: (t) => {
+        const [main, strip] = rows(t.content, [2.2, 1]);
+        return { main, strip };
+      }
+    },
+    "hero+stat": {
+      describe: '"main" (upper 78%) and a short "stat" strip below it',
+      slots: (t) => {
+        const [main, stat] = rows(t.content, [3.6, 1]);
+        return { main, stat };
+      }
+    },
+    "split-2": {
+      describe: '"left" and "right" columns',
+      slots: (t) => {
+        const [left, right] = cols(t.content, [1, 1]);
+        return { left, right };
+      }
+    },
+    "stack-3": {
+      describe: '"top", "middle" and "bottom" rows of equal height',
+      slots: (t) => {
+        const [top, middle, bottom] = rows(t.content, [1, 1, 1]);
+        return { top, middle, bottom };
+      }
+    }
+  };
+
+  // src/runtime/compile.ts
+  var EpisodeError = class extends Error {
+    problems;
+    constructor(problems) {
+      super(problems.join("\n"));
+      this.problems = problems;
+    }
+  };
+  var CUE_KEYS = ["focus", "show", "pulse", "ring", "strike"];
+  var FOCUS_FADE = 0.35;
+  var CAPTION_FADE = 0.28;
+  function compile(ep) {
+    const problems = [];
+    const fail = (m) => problems.push(m);
+    const theme = THEMES[ep.theme ?? "blueprint"];
+    if (!theme) throw new EpisodeError([`theme "${ep.theme}" does not exist -> use one of ${Object.keys(THEMES).join(", ")}`]);
+    if (!ep.id || !/^[a-z0-9-]+$/.test(ep.id)) fail('episode "id" must be lowercase letters, digits and dashes');
+    if (!Array.isArray(ep.scenes) || !ep.scenes.length) throw new EpisodeError(["episode needs at least one scene"]);
+    const scenes = [], beats = [];
+    const beatIds = /* @__PURE__ */ new Set();
+    let clock = 0;
+    ep.scenes.forEach((sc, si) => {
+      const where = `scene "${sc.id}"`;
+      const layout = LAYOUTS[sc.layout];
+      if (!layout) {
+        fail(`${where}: layout "${sc.layout}" does not exist -> use one of ${Object.keys(LAYOUTS).join(", ")}`);
+        return;
+      }
+      const slots = layout.slots(theme);
+      const blocks = [];
+      const ids = /* @__PURE__ */ new Set();
+      for (const b of sc.blocks ?? []) {
+        const def = BLOCKS[b.type];
+        if (!def) {
+          fail(`${where}: block type "${b.type}" does not exist -> use one of ${Object.keys(BLOCKS).join(", ")}, or write a new block`);
+          continue;
+        }
+        const slot = slots[b.slot ?? "main"];
+        if (!slot) {
+          fail(`${where}: block "${b.id}" uses slot "${b.slot ?? "main"}" but layout "${sc.layout}" has ${Object.keys(slots).join(", ")}`);
+          continue;
+        }
+        const inst = def.build(b, { theme, slot, problems });
+        for (const id of inst.ids) {
+          if (ids.has(id)) fail(`${where}: id "${id}" is used by two blocks`);
+          ids.add(id);
+        }
+        blocks.push({ id: b.id, inst });
+      }
+      const rt = { spec: sc, t0: clock, t1: clock, blocks, ids, beats: [] };
+      if (!Array.isArray(sc.beats) || !sc.beats.length) fail(`${where}: needs at least one beat`);
+      for (const b of sc.beats ?? []) {
+        if (beatIds.has(b.id)) fail(`beat id "${b.id}" is used twice`);
+        beatIds.add(b.id);
+        if (b.dur !== void 0 && !(typeof b.dur === "number" && b.dur >= 0.5 && b.dur <= 120)) fail(`beat "${b.id}" dur must be a number of seconds from 0.5 to 120`);
+        const dur = typeof b.dur === "number" && b.dur >= 0.5 ? b.dur : Math.max(2.2, wordCount(b.line) / theme.wordsPerSecond + 0.5);
+        const br = { spec: b, scene: si, t0: clock, t1: clock + dur };
+        clock += dur;
+        rt.beats.push(br);
+        beats.push(br);
+        checkCaption(theme, b, fail);
+        for (const k of CUE_KEYS) {
+          const v = b[k];
+          if (v === void 0 || v === "all" && k === "focus") continue;
+          if (!Array.isArray(v)) {
+            fail(`beat "${b.id}" ${k} must be an array of ids${k === "focus" ? ' or "all"' : ""}`);
+            continue;
+          }
+          for (const id of v) if (!ids.has(id)) fail(`beat "${b.id}" ${k} names "${id}", which is not in scene "${sc.id}" (it has: ${[...ids].slice(0, 30).join(", ")})`);
+        }
+        for (const [id, v] of Object.entries(b.set ?? {})) {
+          if (!ids.has(id)) fail(`beat "${b.id}" set names "${id}", which is not in scene "${sc.id}"`);
+          if (v.value !== void 0 && !(typeof v.value === "number" && Number.isFinite(v.value))) fail(`beat "${b.id}" set "${id}" value must be a number`);
+          if (v.label !== void 0) {
+            const bad = typeof v.label === "string" ? unsupportedChars(theme, v.label) : [];
+            if (typeof v.label !== "string" || !v.label.trim() || wordCount(v.label) > 4 || bad.length) fail(`beat "${b.id}" set "${id}" label must be 1 to 4 words of plain ASCII`);
+          }
+        }
+        (b.flows ?? []).forEach((f, i) => checkFlow(f, `beat "${b.id}" flow ${i + 1}`, fail));
+      }
+      rt.t1 = clock;
+      scenes.push(rt);
+    });
+    if (problems.length) throw new EpisodeError(problems);
+    const duration = clock;
+    const sceneCues = scenes.map((sc, si) => {
+      const local = (b) => [b.t0 - sc.t0, b.t1 - sc.t0];
+      const appear = /* @__PURE__ */ new Map();
+      const mention = (id, at) => {
+        if (!appear.has(id) || appear.get(id) > at) appear.set(id, at);
+      };
+      for (const b of sc.beats) {
+        const [l0] = local(b);
+        for (const k of CUE_KEYS) {
+          const v = b.spec[k];
+          if (Array.isArray(v)) v.forEach((id) => mention(id, l0));
+        }
+        for (const f of b.spec.flows ?? []) f.route.forEach((id) => mention(id, l0));
+        for (const id of Object.keys(b.spec.set ?? {})) mention(id, l0);
+      }
+      const prev = si > 0 ? scenes[si - 1].ids : /* @__PURE__ */ new Set();
+      const carried = (id) => prev.has(id) && sc.ids.has(id);
+      const pulses = /* @__PURE__ */ new Map();
+      const sets = /* @__PURE__ */ new Map();
+      const rings = [], strikes = [];
+      for (const b of sc.beats) {
+        const [l0, l1] = local(b);
+        for (const id of b.spec.pulse ?? []) {
+          if (!pulses.has(id)) pulses.set(id, []);
+          pulses.get(id).push([l0, l1]);
+        }
+        for (const [id, v] of Object.entries(b.spec.set ?? {})) {
+          if (!sets.has(id)) sets.set(id, []);
+          sets.get(id).push({ t: l0 + 0.2, ...v });
+        }
+        for (const id of b.spec.ring ?? []) rings.push({ id, t: l0 + 0.1 });
+        for (const id of b.spec.strike ?? []) strikes.push({ id, t: l0 + 0.4 });
+      }
+      const cues = {
+        appear: (id) => carried(id) ? -Infinity : appear.get(id) ?? 0,
+        mentioned: (id) => appear.has(id),
+        carried,
+        pulse(id, t) {
+          for (const [a, b] of pulses.get(id) ?? []) if (t >= a && t <= b) {
+            const ramp = clamp01((t - a) / 0.3) * clamp01((b - t) / 0.3);
+            return ramp * (0.75 + 0.25 * Math.sin((t - a) * 6));
+          }
+          return 0;
+        },
+        value(id, t) {
+          const list = sets.get(id) ?? [];
+          let cur, from, label2;
+          for (const s of list) {
+            if (s.t > t) break;
+            if (cur?.value !== void 0) from = cur.value;
+            cur = s;
+            if (s.label !== void 0) label2 = s.label;
+          }
+          if (!cur) return { k: 1 };
+          return { value: cur.value ?? from, from, label: label2, k: clamp01((t - cur.t) / 0.9) };
+        }
+      };
+      const focusSets = sc.beats.map((b) => b.spec.focus === void 0 || b.spec.focus === "all" ? null : new Set(b.spec.focus));
+      const focusAt = (owner, t) => {
+        const found = sc.beats.findIndex((b) => t < b.t1 - sc.t0);
+        const idx = found < 0 ? sc.beats.length - 1 : found;
+        const w = (j) => {
+          const s = focusSets[j];
+          return !s || s.has(owner) ? 1 : 0;
+        };
+        const cur = w(idx), l0 = sc.beats[idx].t0 - sc.t0;
+        if (idx === 0) return cur;
+        return lerp(w(idx - 1), cur, easeOutCubic(clamp01((t - l0) / FOCUS_FADE)));
+      };
+      return { cues, focusAt, flows: buildFlows(sc, problems), rings, strikes };
+    });
+    if (problems.length) throw new EpisodeError(problems);
+    function buildFlows(sc, out) {
+      const flows = [];
+      sc.beats.forEach((b) => {
+        (b.spec.flows ?? []).forEach((f, i) => {
+          const where = `beat "${b.spec.id}" flow ${i + 1}`;
+          let r = null;
+          for (const { inst } of sc.blocks) {
+            r = inst.route?.(f.route) ?? null;
+            if (r) break;
+          }
+          if (!r) {
+            out.push(`${where}: no block in scene "${sc.spec.id}" can route ${f.route.join(" > ")}`);
+            return;
+          }
+          if (typeof r === "string") {
+            out.push(`${where}: ${r}`);
+            return;
+          }
+          let pts = r.pts, stops = r.stops, ids = f.route;
+          if (f.reverse) {
+            pts = [...pts].reverse();
+            stops = stops.map((s) => pts.length - 1 - s).reverse();
+            ids = [...ids].reverse();
+          }
+          const cum = cumLengths(pts), len = cum[cum.length - 1];
+          const distOf = (id) => {
+            const j = ids.indexOf(id);
+            return j < 0 ? null : cum[stops[j]];
+          };
+          const anchorOf = (id) => {
+            for (const { inst } of sc.blocks) {
+              const a = inst.anchor?.(id);
+              if (a) return a;
+            }
+            return null;
+          };
+          let stopAt = len, mark2 = null;
+          if (f.blockAt) {
+            const d = distOf(f.blockAt), a = anchorOf(f.blockAt);
+            if (d === null || !a) {
+              out.push(`${where}: blockAt "${f.blockAt}" is not on the route ${ids.join(" > ")}`);
+              return;
+            }
+            stopAt = Math.max(10, d - a.r - 22);
+            mark2 = pointAt(pts, cum, stopAt + 4);
+          }
+          const t0 = b.t0 - sc.t0 + (f.delay ?? 0.3);
+          let t1 = b.t1 - sc.t0;
+          if (f.untilBeat) {
+            const u = sc.beats.find((x) => x.spec.id === f.untilBeat);
+            if (!u) {
+              out.push(`${where}: untilBeat "${f.untilBeat}" is not a beat of scene "${sc.spec.id}"`);
+              return;
+            }
+            t1 = u.t1 - sc.t0;
+          }
+          let travel = f.dur ?? stopAt / (f.speed ?? theme.packetSpeed);
+          const room = (t1 - t0) * 0.85;
+          if (f.mode !== "line" && travel > room) {
+            if (travel / 3 > room) {
+              out.push(`${where}: too short for packets to cross this ${Math.round(stopAt)} px route -> lower "delay", keep it running with "untilBeat", or give the beat a longer "dur"`);
+              return;
+            }
+            travel = room;
+          }
+          const color = theme.roles[f.color ?? "public"];
+          if (!color) {
+            out.push(`${where}: color "${f.color}" is not a theme role`);
+            return;
+          }
+          const looks = [{ d: -Infinity, color, glyph: f.glyph ?? "plain" }];
+          const transforms = f.transform === void 0 ? [] : Array.isArray(f.transform) ? f.transform : [f.transform];
+          const placed = [];
+          for (const tr of transforms) {
+            const d = distOf(tr.at);
+            if (d === null) {
+              out.push(`${where}: transform.at "${tr.at}" is not on the route ${ids.join(" > ")}`);
+              return;
+            }
+            placed.push({ tr, d });
+          }
+          for (const { tr, d } of placed.sort((a, b2) => a.d - b2.d)) {
+            const c = tr.color === void 0 ? void 0 : theme.roles[tr.color];
+            if (tr.color !== void 0 && !c) {
+              out.push(`${where}: transform color "${tr.color}" is not a theme role`);
+              return;
+            }
+            looks.push({ d, color: c ?? looks[looks.length - 1].color, glyph: tr.glyph ?? looks[looks.length - 1].glyph });
+          }
+          flows.push({ f, id: `flow:${b.spec.id}:${i}`, t0, t1, pts, cum, len, stopAt, looks, travel, mark: mark2 });
+        });
+      });
+      return flows;
+    }
+    function flowElements(fl, t) {
+      const out = [];
+      if (t < fl.t0 || t > fl.t1 + 0.3) return out;
+      const fadeOut = 1 - clamp01((t - fl.t1) / 0.3);
+      const blocked = fl.mark !== null;
+      if (fl.f.line !== false || fl.f.mode === "line") {
+        const k = easeOutCubic(clamp01((t - fl.t0) / 0.5));
+        const pts = slicePts(fl.pts, fl.stopAt);
+        const line = { kind: "link", id: fl.id, alpha: fadeOut, z: 25, pts, color: fl.looks[0].color, width: 4.5, dashed: fl.f.dashed ?? blocked, style: "line", progress: k, ends: fl.f.route };
+        out.push(line);
+      }
+      if (fl.f.mode === "line") return out;
+      const once = fl.f.mode === "once";
+      const period = fl.f.period ?? 0.75, v = fl.stopAt / fl.travel;
+      const spawns = [];
+      if (once) spawns.push(fl.t0);
+      else for (let s = fl.t0; s < fl.t1 - 0.2; s += period) spawns.push(s);
+      for (const [i, s] of spawns.entries()) {
+        if (t < s) break;
+        let d = (t - s) * v;
+        let a = fadeOut;
+        if (d >= fl.stopAt) {
+          if (once && !blocked) {
+            d = fl.stopAt;
+          } else {
+            a *= 1 - clamp01((d - fl.stopAt) / (v * 0.2));
+            d = fl.stopAt;
+          }
+        }
+        if (a <= 0) continue;
+        const [x, y] = pointAt(fl.pts, fl.cum, d);
+        let look = fl.looks[0];
+        for (const l of fl.looks) if (d >= l.d) look = l;
+        out.push({ kind: "packet", id: `${fl.id}:p${i}`, alpha: a * clamp01((t - s) / 0.12), z: 45, x, y, r: 15, color: look.color, glyph: look.glyph });
+      }
+      if (fl.mark) {
+        const reach = fl.t0 + (once || spawns.length ? fl.travel : 0.3);
+        const k = clamp01((t - reach) / 0.3);
+        if (k > 0) out.push({ kind: "mark", id: `${fl.id}:x`, alpha: k * fadeOut, z: 47, x: fl.mark[0], y: fl.mark[1], r: 24 });
+      }
+      return out;
+    }
+    const ownerBox = (els, owner) => {
+      let b = null;
+      for (const e of els) if (e.owner === owner) {
+        const eb = elBox(theme, e);
+        if (eb) b = b ? [Math.min(b[0], eb[0]), Math.min(b[1], eb[1]), Math.max(b[2], eb[2]), Math.max(b[3], eb[3])] : eb;
+      }
+      return b;
+    };
+    function sceneFrame(si, lt) {
+      const sc = scenes[si], c = sceneCues[si];
+      let els = [];
+      for (const { inst } of sc.blocks) els.push(...inst.frame(lt, c.cues));
+      for (const e of els) {
+        if (!e.owner) continue;
+        const w = c.focusAt(e.owner, lt);
+        if (w >= 1) continue;
+        const dim = e.kind === "label" || e.kind === "text" ? theme.dim.label : e.kind === "zone" ? theme.dim.zone : theme.dim.map;
+        e.alpha *= lerp(dim, 1, w);
+      }
+      for (const fl of c.flows) els.push(...flowElements(fl, lt));
+      for (const r of c.rings) {
+        const k = (lt - r.t) / 0.7;
+        if (k < 0 || k > 1) continue;
+        let a = null;
+        for (const { inst } of sc.blocks) {
+          a = inst.anchor?.(r.id) ?? null;
+          if (a) break;
+        }
+        if (a) els.push({ kind: "ring", id: `ring:${r.id}:${r.t}`, alpha: 0.85 * (1 - k), z: 35, x: a.x, y: a.y, r: a.r * 0.6 + a.r * 1.1 * easeOutCubic(k), color: theme.roles.gateway, width: 4 * (1 - k) + 1 });
+      }
+      for (const s of c.strikes) {
+        if (lt < s.t) continue;
+        const b = ownerBox(els, s.id);
+        if (b) els.push({ kind: "strike", id: `strike:${s.id}`, alpha: 1, z: 48, box: b, progress: easeOutCubic(clamp01((lt - s.t) / 0.5)) });
+      }
+      els = els.filter((e) => !(e.alpha <= 2e-3));
+      return els;
+    }
+    const endFrames = /* @__PURE__ */ new Map();
+    const endFrame = (si) => {
+      if (!endFrames.has(si)) endFrames.set(si, new Map(sceneFrame(si, scenes[si].t1 - scenes[si].t0).filter((e) => e.kind !== "ring").map((e) => [e.id, e])));
+      return endFrames.get(si);
+    };
+    function beatAt(t) {
+      for (const b of beats) if (t < b.t1) return b;
+      return beats[beats.length - 1];
+    }
+    const sceneIndexAt = (t) => {
+      const i = scenes.findIndex((s) => t < s.t1);
+      return i < 0 ? scenes.length - 1 : i;
+    };
+    function captionEls(t) {
+      const b = beatAt(t), i = beats.indexOf(b), k = clamp01((t - b.t0) / CAPTION_FADE);
+      const out = [];
+      const add = (text, a, tag) => {
+        if (a <= 0) return;
+        const L = placeLabel(theme, { id: `caption:${tag}`, lines: [text], owner: "", color: theme.roles.gateway, anchor: [0, 0, 0, 0], size: theme.type.caption, subSize: theme.type.caption, z: 90 });
+        const w = L.box[2] - L.box[0], [x0, y0, x1, y1] = theme.captionBox, cx = (x0 + x1) / 2;
+        L.box = [cx - w / 2, y0, cx + w / 2, y1];
+        L.owner = void 0;
+        L.alpha = a;
+        out.push(L);
+      };
+      const intro = i === 0 ? clamp01((t - 0.25) / 0.3) : k;
+      if (i > 0 && k < 1) add(beats[i - 1].spec.caption, 1 - k, beats[i - 1].spec.id);
+      add(b.spec.caption, intro, b.spec.id);
+      return out;
+    }
+    function frame2(tIn) {
+      const t = Math.max(0, Math.min(duration, tIn));
+      const si = sceneIndexAt(t), sc = scenes[si], lt = t - sc.t0;
+      let els = sceneFrame(si, lt);
+      if (si > 0 && lt < theme.transition) {
+        const k = easeInOutCubic(lt / theme.transition), prev = endFrame(si - 1), seen = /* @__PURE__ */ new Set();
+        els = els.map((e) => {
+          const p = prev.get(e.id);
+          if (p && p.kind === e.kind) {
+            seen.add(e.id);
+            return interpolate(p, e, k);
+          }
+          return { ...e, alpha: e.alpha * clamp01((k - 0.3) / 0.7) };
+        });
+        for (const [id, p] of prev) if (!seen.has(id)) {
+          const a = p.alpha * (1 - clamp01(k * 1.8));
+          if (a > 2e-3) els.push({ ...p, alpha: a });
+        }
+      }
+      els.push(...captionEls(t));
+      return els.sort((a, b) => a.z - b.z);
+    }
+    return {
+      id: ep.id,
+      title: ep.title,
+      theme,
+      duration,
+      scenes,
+      beats,
+      frame: frame2,
+      beatAt,
+      flowsOf: (si) => sceneCues[si].flows,
+      glidingIds: (si) => si === 0 ? /* @__PURE__ */ new Set() : new Set(endFrame(si - 1).keys())
+    };
+  }
+  function checkCaption(theme, b, fail) {
+    const c = b.caption ?? "";
+    if (!c.trim()) {
+      fail(`beat "${b.id}" needs a caption`);
+      return;
+    }
+    if (wordCount(c) > 4) fail(`beat "${b.id}" caption "${c}" has more than 4 words -> shorten it`);
+    const bad = unsupportedChars(theme, c);
+    if (bad.length) fail(`beat "${b.id}" caption has characters not in the font: ${bad.join(" ")} -> plain ASCII, write TO instead of arrows`);
+    const w = textWidth(theme, c, theme.type.caption) + theme.type.caption * 0.7;
+    if (w > theme.captionBox[2] - theme.captionBox[0]) fail(`beat "${b.id}" caption "${c}" is too wide for the caption slot -> shorten it`);
+    if (!b.line?.trim()) fail(`beat "${b.id}" needs the spoken "line"`);
+  }
+  function checkFlow(f, where, fail) {
+    if (!Array.isArray(f.route) || f.route.length < 2) fail(`${where}: route must list at least two ids`);
+    const num = (v, what, min, max) => {
+      if (v !== void 0 && !(typeof v === "number" && Number.isFinite(v) && v >= min && v <= max)) fail(`${where}: ${what} must be a number from ${min} to ${max}`);
+    };
+    num(f.delay, "delay", 0, 60);
+    num(f.period, "period", 0.1, 10);
+    num(f.speed, "speed", 20, 5e3);
+    num(f.dur, "dur", 0.1, 60);
+    if (f.mode !== void 0 && !["stream", "once", "line"].includes(f.mode)) fail(`${where}: mode must be stream, once or line`);
+    const glyphs = [f.glyph, ...(f.transform === void 0 ? [] : Array.isArray(f.transform) ? f.transform : [f.transform]).map((t) => t.glyph)];
+    for (const g of glyphs) if (g !== void 0 && g !== "plain" && g !== "locked") fail(`${where}: glyph must be plain or locked`);
+  }
+  function interpolate(a, b, k) {
+    const out = { ...b };
+    for (const key of Object.keys(b)) {
+      const x = a[key], y = b[key];
+      if (typeof x === "number" && typeof y === "number") out[key] = lerp(x, y, k);
+      else if (isHex(x) && isHex(y)) out[key] = mixHex(x, y, k);
+      else if (Array.isArray(x) && Array.isArray(y) && x.length === y.length && x.every((v) => typeof v === "number")) out[key] = y.map((v, i) => lerp(x[i], v, k));
+      else if (key === "pts" && Array.isArray(x) && Array.isArray(y)) out[key] = tweenPts(x, y, k);
+      else out[key] = k < 0.5 ? x ?? y : y;
+    }
+    return out;
+  }
+  function tweenPts(a, b, k) {
+    const n = Math.max(a.length, b.length);
+    const at = (p, i) => p[Math.min(p.length - 1, Math.round(i * (p.length - 1) / Math.max(1, n - 1)))];
+    return Array.from({ length: n }, (_, i) => {
+      const p = at(a, i), q = at(b, i);
+      return [lerp(p[0], q[0], k), lerp(p[1], q[1], k)];
+    });
+  }
+  function elBox(theme, e) {
+    switch (e.kind) {
+      case "zone":
+      case "label":
+      case "text":
+      case "panel":
+      case "strike":
+        return e.box;
+      case "node": {
+        const n = theme.nodeSizes[e.type];
+        return nodeBox(e.x, e.y, n.hw, n.h, e.scale);
+      }
+      case "packet":
+      case "mark":
+        return [e.x - e.r, e.y - e.r, e.x + e.r, e.y + e.r];
+      case "ring":
+        return null;
+      case "link": {
+        let b = [Infinity, Infinity, -Infinity, -Infinity];
+        for (const [x, y] of e.pts) b = [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)];
+        return b;
+      }
+    }
+  }
+
+  // src/render/draw.ts
+  function drawFrame(ctx2, theme, els, t, frame2 = "panel") {
+    const W = theme.W, H = theme.H;
+    ctx2.save();
+    ctx2.setTransform(1, 0, 0, 1, 0, 0);
+    if (frame2 === "full") {
+      ctx2.fillStyle = "#05070d";
+      ctx2.fillRect(0, H, W, theme.fullH - H);
+    }
+    ctx2.beginPath();
+    ctx2.rect(0, 0, W, H);
+    ctx2.clip();
+    background(ctx2, theme, t);
+    for (const e of els) {
+      if (e.alpha <= 0) continue;
+      ctx2.save();
+      ctx2.globalAlpha = clamp01(e.alpha);
+      switch (e.kind) {
+        case "zone":
+          zone(ctx2, theme, e);
+          break;
+        case "link":
+          link(ctx2, theme, e);
+          break;
+        case "node":
+          node(ctx2, theme, e, t);
+          break;
+        case "label":
+          label(ctx2, theme, e, t);
+          break;
+        case "text":
+          font(ctx2, theme, e.size);
+          ctx2.fillStyle = e.color;
+          ctx2.textAlign = e.align;
+          ctx2.textBaseline = "alphabetic";
+          ctx2.fillText(e.text, e.align === "center" ? (e.box[0] + e.box[2]) / 2 : e.align === "right" ? e.box[2] : e.box[0], e.box[1] + (e.box[3] - e.box[1] + e.size * theme.font.cap) / 2);
+          break;
+        case "panel":
+          rr(ctx2, e.box[0], e.box[1], e.box[2] - e.box[0], e.box[3] - e.box[1], e.radius);
+          ctx2.fillStyle = e.fill;
+          ctx2.fill();
+          if (e.strokeWidth > 0) {
+            ctx2.strokeStyle = e.stroke;
+            ctx2.lineWidth = e.strokeWidth;
+            ctx2.stroke();
+          }
+          break;
+        case "packet":
+          packet(ctx2, theme, e);
+          break;
+        case "mark":
+          mark(ctx2, theme, e.x, e.y, e.r, t);
+          break;
+        case "ring":
+          ctx2.strokeStyle = e.color;
+          ctx2.lineWidth = e.width;
+          ctx2.beginPath();
+          ctx2.ellipse(e.x, e.y, e.r, e.r * ISO * 1.15, 0, 0, Math.PI * 2);
+          ctx2.stroke();
+          break;
+        case "strike": {
+          const [x0, y0, x1, y1] = e.box, red = theme.roles.blocked, p = e.progress;
+          ctx2.strokeStyle = red;
+          ctx2.lineWidth = 9;
+          ctx2.lineCap = "round";
+          ctx2.shadowColor = red;
+          ctx2.shadowBlur = 14;
+          const seg = (ax, ay, bx, by, k) => {
+            if (k <= 0) return;
+            ctx2.beginPath();
+            ctx2.moveTo(ax, ay);
+            ctx2.lineTo(ax + (bx - ax) * k, ay + (by - ay) * k);
+            ctx2.stroke();
+          };
+          seg(x0 + 10, y0 + 10, x1 - 10, y1 - 10, clamp01(p * 2));
+          seg(x1 - 10, y0 + 10, x0 + 10, y1 - 10, clamp01(p * 2 - 1));
+          break;
+        }
+      }
+      ctx2.restore();
+    }
+    ctx2.restore();
+  }
+  function font(ctx2, theme, size) {
+    ctx2.font = `700 ${size}px ${theme.font.stack}`;
+    if ("fontKerning" in ctx2) ctx2.fontKerning = "none";
+  }
+  function rr(ctx2, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx2.beginPath();
+    ctx2.moveTo(x + r, y);
+    ctx2.arcTo(x + w, y, x + w, y + h, r);
+    ctx2.arcTo(x + w, y + h, x, y + h, r);
+    ctx2.arcTo(x, y + h, x, y, r);
+    ctx2.arcTo(x, y, x + w, y, r);
+    ctx2.closePath();
+  }
+  function poly(ctx2, pts) {
+    ctx2.beginPath();
+    ctx2.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx2.lineTo(pts[i][0], pts[i][1]);
+    ctx2.closePath();
+  }
+  var facePt = (A, B, D, u, v) => [A[0] + (B[0] - A[0]) * u + (D[0] - A[0]) * v, A[1] + (B[1] - A[1]) * u + (D[1] - A[1]) * v];
+  function background(ctx2, theme, t) {
+    const W = theme.W, H = theme.H;
+    const g = ctx2.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, theme.page[0]);
+    g.addColorStop(1, theme.page[1]);
+    ctx2.fillStyle = g;
+    ctx2.fillRect(0, 0, W, H);
+    const sweep = easeOutCubic(clamp01(t / 1.1)) * (H + 200);
+    ctx2.save();
+    ctx2.beginPath();
+    ctx2.rect(0, 0, W, sweep);
+    ctx2.clip();
+    for (let dir = -1; dir <= 1; dir += 2) for (let i = -40; i < 70; i++) {
+      const c = i * 40;
+      ctx2.strokeStyle = i % 4 === 0 ? "rgba(95,212,255,0.14)" : "rgba(95,212,255,0.06)";
+      ctx2.lineWidth = i % 4 === 0 ? 1.5 : 1;
+      ctx2.beginPath();
+      if (dir > 0) {
+        ctx2.moveTo(0, c);
+        ctx2.lineTo(W, c + W * ISO);
+      } else {
+        ctx2.moveTo(0, c + W * ISO);
+        ctx2.lineTo(W, c);
+      }
+      ctx2.stroke();
+    }
+    ctx2.restore();
+    if (t < 1.3) {
+      ctx2.fillStyle = `rgba(120,225,255,${0.5 * (1 - clamp01((t - 0.9) / 0.4))})`;
+      ctx2.fillRect(0, sweep - 3, W, 3);
+    }
+    const v = ctx2.createRadialGradient(W / 2, H * 0.45, 260, W / 2, H * 0.6, H * 0.9);
+    v.addColorStop(0, "rgba(0,0,0,0)");
+    v.addColorStop(1, "rgba(2,8,26,0.45)");
+    ctx2.fillStyle = v;
+    ctx2.fillRect(0, 0, W, H);
+  }
+  function tracePerimeter(ctx2, [x0, y0, x1, y1], p) {
+    let left = 2 * (x1 - x0 + (y1 - y0)) * p;
+    ctx2.beginPath();
+    ctx2.moveTo(x0, y0);
+    for (const [ax, ay, bx, by] of [[x0, y0, x1, y0], [x1, y0, x1, y1], [x1, y1, x0, y1], [x0, y1, x0, y0]]) {
+      const len = Math.hypot(bx - ax, by - ay);
+      if (left >= len) {
+        ctx2.lineTo(bx, by);
+        left -= len;
+      } else {
+        ctx2.lineTo(ax + (bx - ax) * left / len, ay + (by - ay) * left / len);
+        break;
+      }
+    }
+  }
+  function zone(ctx2, theme, z) {
+    const [x0, y0, x1, y1] = z.box, a = ctx2.globalAlpha, k = z.progress;
+    ctx2.fillStyle = "rgba(2,8,26,0.35)";
+    ctx2.fillRect(x0 + 6, y1 + z.lip, x1 - x0 - 12, 8 * k);
+    ctx2.fillStyle = shade(z.fill, -0.45);
+    ctx2.fillRect(x0, y1, x1 - x0, z.lip);
+    ctx2.fillStyle = z.fill;
+    ctx2.fillRect(x0, y0, x1 - x0, y1 - y0);
+    ctx2.save();
+    ctx2.beginPath();
+    ctx2.rect(x0, y0, x1 - x0, y1 - y0);
+    ctx2.clip();
+    ctx2.strokeStyle = "rgba(255,255,255,0.07)";
+    ctx2.lineWidth = 1;
+    for (let c = y0 - (x1 - x0); c < y1 + (x1 - x0); c += 28) {
+      ctx2.beginPath();
+      ctx2.moveTo(x0, c);
+      ctx2.lineTo(x1, c + (x1 - x0) * ISO);
+      ctx2.stroke();
+      ctx2.beginPath();
+      ctx2.moveTo(x0, c + (x1 - x0) * ISO);
+      ctx2.lineTo(x1, c);
+      ctx2.stroke();
+    }
+    const g = ctx2.createLinearGradient(0, y0, 0, y0 + 22);
+    g.addColorStop(0, "rgba(255,255,255,0.10)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx2.fillStyle = g;
+    ctx2.fillRect(x0, y0, x1 - x0, 22);
+    ctx2.restore();
+    ctx2.globalAlpha = a;
+    ctx2.strokeStyle = z.edge;
+    ctx2.lineWidth = z.dashed ? 3 : 2.5;
+    if (z.dashed) ctx2.setLineDash([14, 9]);
+    tracePerimeter(ctx2, z.box, k);
+    ctx2.stroke();
+    ctx2.setLineDash([]);
+  }
+  function polyPath(ctx2, pts, len) {
+    const cum = cumLengths(pts);
+    ctx2.beginPath();
+    ctx2.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) {
+      if (cum[i] <= len) ctx2.lineTo(pts[i][0], pts[i][1]);
+      else {
+        const p = pointAt(pts, cum, len);
+        ctx2.lineTo(p[0], p[1]);
+        break;
+      }
+    }
+  }
+  function link(ctx2, theme, l) {
+    const cum = cumLengths(l.pts), len = cum[cum.length - 1] * l.progress;
+    if (len <= 0) return;
+    ctx2.lineCap = "round";
+    ctx2.lineJoin = "round";
+    if (l.style === "tunnel") {
+      ctx2.strokeStyle = rgba(l.color, 0.18);
+      ctx2.lineWidth = 34;
+      polyPath(ctx2, l.pts, len);
+      ctx2.stroke();
+      ctx2.strokeStyle = rgba(l.color, 0.75);
+      ctx2.lineWidth = 2.5;
+      for (const off of [-15, 15]) {
+        ctx2.save();
+        offsetPath(ctx2, l.pts, len, off);
+        ctx2.stroke();
+        ctx2.restore();
+      }
+      ctx2.setLineDash([10, 12]);
+      ctx2.strokeStyle = l.color;
+      ctx2.lineWidth = l.width;
+      polyPath(ctx2, l.pts, len);
+      ctx2.stroke();
+      ctx2.setLineDash([]);
+      if (l.progress > 0.55) {
+        const m = pointAt(l.pts, cum, cum[cum.length - 1] / 2);
+        ctx2.globalAlpha *= clamp01((l.progress - 0.55) / 0.3);
+        lock(ctx2, theme, m[0], m[1], 15, l.color);
+      }
+      return;
+    }
+    if (l.dashed) ctx2.setLineDash([12, 10]);
+    if (l.width >= 4) {
+      ctx2.strokeStyle = rgba(l.color, 0.22);
+      ctx2.lineWidth = l.width * 2.6;
+      polyPath(ctx2, l.pts, len);
+      ctx2.stroke();
+    }
+    ctx2.strokeStyle = l.color;
+    ctx2.lineWidth = l.width;
+    polyPath(ctx2, l.pts, len);
+    ctx2.stroke();
+  }
+  function offsetPath(ctx2, pts, len, off) {
+    const cum = cumLengths(pts), out = [];
+    for (let i = 1; i < pts.length; i++) {
+      const [ax, ay] = pts[i - 1], [bx, by] = pts[i], d = Math.hypot(bx - ax, by - ay) || 1, nx = -(by - ay) / d * off, ny = (bx - ax) / d * off;
+      if (i === 1) out.push([ax + nx, ay + ny]);
+      if (cum[i] <= len) out.push([bx + nx, by + ny]);
+      else {
+        const p = pointAt(pts, cum, len);
+        out.push([p[0] + nx, p[1] + ny]);
+        break;
+      }
+    }
+    ctx2.beginPath();
+    ctx2.moveTo(out[0][0], out[0][1]);
+    for (let i = 1; i < out.length; i++) ctx2.lineTo(out[i][0], out[i][1]);
+  }
+  function lock(ctx2, theme, x, y, s, color) {
+    ctx2.save();
+    ctx2.fillStyle = theme.ink;
+    ctx2.strokeStyle = color;
+    ctx2.lineWidth = 2.5;
+    ctx2.beginPath();
+    ctx2.arc(x, y, s * 1.35, 0, Math.PI * 2);
+    ctx2.fill();
+    ctx2.stroke();
+    ctx2.lineWidth = s * 0.22;
+    ctx2.beginPath();
+    ctx2.arc(x, y - s * 0.15, s * 0.42, Math.PI, 0);
+    ctx2.stroke();
+    ctx2.fillStyle = color;
+    rr(ctx2, x - s * 0.62, y - s * 0.15, s * 1.24, s * 0.9, s * 0.15);
+    ctx2.fill();
+    ctx2.restore();
+  }
+  function shadowUnder(ctx2, cx, gy, r) {
+    const sg = ctx2.createRadialGradient(cx, gy + 3, 3, cx, gy + 3, r);
+    sg.addColorStop(0, "rgba(2,8,26,0.55)");
+    sg.addColorStop(1, "rgba(2,8,26,0)");
+    ctx2.save();
+    ctx2.translate(cx, gy + 3);
+    ctx2.scale(1, 0.6);
+    ctx2.translate(-cx, -(gy + 3));
+    ctx2.fillStyle = sg;
+    ctx2.beginPath();
+    ctx2.arc(cx, gy + 3, r, 0, Math.PI * 2);
+    ctx2.fill();
+    ctx2.restore();
+  }
+  function blockFaces(o) {
+    const { gx: cx, gy, hw, h, hh } = o, top = gy - h;
+    return {
+      top,
+      L: [[cx - hw, top], [cx, top + hh], [cx, gy + hh], [cx - hw, gy]],
+      R: [[cx, top + hh], [cx + hw, top], [cx + hw, gy], [cx, gy + hh]],
+      T: [[cx, top - hh], [cx + hw, top], [cx, top + hh], [cx - hw, top]]
+    };
+  }
+  function blockBody(ctx2, o, color) {
+    const { gx: cx, gy, hw, hh } = o, f = blockFaces(o), { top, L, R, T } = f;
+    ctx2.fillStyle = shade(color, -0.12);
+    poly(ctx2, L);
+    ctx2.fill();
+    ctx2.fillStyle = shade(color, -0.42);
+    poly(ctx2, R);
+    ctx2.fill();
+    ctx2.fillStyle = shade(color, 0.28);
+    poly(ctx2, T);
+    ctx2.fill();
+    ctx2.strokeStyle = "rgba(255,255,255,0.55)";
+    ctx2.lineWidth = 1.5;
+    poly(ctx2, T.map(([x, y]) => [cx + (x - cx) * 0.8, top + (y - top) * 0.8]));
+    ctx2.stroke();
+    ctx2.strokeStyle = "rgba(0,0,0,0.35)";
+    ctx2.lineWidth = 2.5;
+    ctx2.beginPath();
+    ctx2.moveTo(cx - hw, gy);
+    ctx2.lineTo(cx, gy + hh);
+    ctx2.lineTo(cx + hw, gy);
+    ctx2.stroke();
+    ctx2.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx2.lineWidth = 1.8;
+    poly(ctx2, [[cx, top - hh], [cx + hw, top], [cx + hw, gy], [cx, gy + hh], [cx - hw, gy], [cx - hw, top]]);
+    ctx2.stroke();
+    ctx2.beginPath();
+    ctx2.moveTo(cx - hw, top);
+    ctx2.lineTo(cx, top + hh);
+    ctx2.lineTo(cx + hw, top);
+    ctx2.moveTo(cx, top + hh);
+    ctx2.lineTo(cx, gy + hh);
+    ctx2.stroke();
+    return f;
+  }
+  function cylinder(ctx2, o, color) {
+    const { gx: cx, gy, hw, h } = o, ry = hw * ISO, top = gy - h;
+    ctx2.fillStyle = shade(color, -0.2);
+    ctx2.beginPath();
+    ctx2.moveTo(cx - hw, top);
+    ctx2.lineTo(cx - hw, gy);
+    ctx2.ellipse(cx, gy, hw, ry, 0, Math.PI, 0, true);
+    ctx2.lineTo(cx + hw, top);
+    ctx2.closePath();
+    ctx2.fill();
+    ctx2.fillStyle = shade(color, 0.28);
+    ctx2.beginPath();
+    ctx2.ellipse(cx, top, hw, ry, 0, 0, Math.PI * 2);
+    ctx2.fill();
+    ctx2.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx2.lineWidth = 1.8;
+    ctx2.stroke();
+    ctx2.beginPath();
+    ctx2.moveTo(cx - hw, top);
+    ctx2.lineTo(cx - hw, gy);
+    ctx2.ellipse(cx, gy, hw, ry, 0, Math.PI, 0, true);
+    ctx2.lineTo(cx + hw, top);
+    ctx2.stroke();
+  }
+  var DARK = "rgba(6,22,51,0.75)";
+  function node(ctx2, theme, e, t) {
+    const size = theme.nodeSizes[e.type] ?? theme.nodeSizes.server, c = e.color;
+    ctx2.translate(e.x, e.y);
+    ctx2.scale(e.scale, e.scale);
+    ctx2.translate(-e.x, -e.y);
+    if (e.glow > 0) {
+      ctx2.shadowColor = rgba(c, 0.5 + 0.4 * e.glow);
+      ctx2.shadowBlur = 26 * e.glow;
+    }
+    const o = { gx: e.x, gy: e.y, hw: size.hw, h: size.h, hh: size.hw * ISO };
+    if (e.type === "users") {
+      for (const [dx, dy, s] of [[10, -5, 0.9], [-9, 2, 1]]) {
+        const x = o.gx + dx, base = o.gy + dy;
+        ctx2.fillStyle = c;
+        ctx2.strokeStyle = theme.page[0];
+        ctx2.lineWidth = 2.2;
+        ctx2.beginPath();
+        ctx2.moveTo(x - 12 * s, base);
+        ctx2.quadraticCurveTo(x - 12 * s, base - 31 * s, x, base - 33 * s);
+        ctx2.quadraticCurveTo(x + 12 * s, base - 31 * s, x + 12 * s, base);
+        ctx2.closePath();
+        ctx2.fill();
+        ctx2.stroke();
+        ctx2.beginPath();
+        ctx2.arc(x, base - 43 * s, 9 * s, 0, Math.PI * 2);
+        ctx2.fill();
+        ctx2.stroke();
+      }
+      return;
+    }
+    ctx2.shadowBlur = e.glow > 0 ? ctx2.shadowBlur : 0;
+    shadowUnder(ctx2, o.gx, o.gy, o.hw + 18);
+    if (e.type === "database") {
+      cylinder(ctx2, o, c);
+      ctx2.strokeStyle = DARK;
+      ctx2.lineWidth = 2.5;
+      for (const k of [0.38, 0.7]) {
+        ctx2.beginPath();
+        ctx2.ellipse(o.gx, o.gy - o.h * (1 - k), o.hw, o.hw * ISO, 0, 0.15 * Math.PI, 0.85 * Math.PI);
+        ctx2.stroke();
+      }
+      return;
+    }
+    if (e.type === "cloud") {
+      const y = o.gy - o.h;
+      ctx2.fillStyle = shade(c, 0.1);
+      ctx2.strokeStyle = "rgba(255,255,255,0.9)";
+      ctx2.lineWidth = 2;
+      ctx2.beginPath();
+      ctx2.arc(o.gx - 18, y + 6, 16, Math.PI * 0.5, Math.PI * 1.5);
+      ctx2.arc(o.gx - 2, y - 8, 20, Math.PI, Math.PI * 1.9);
+      ctx2.arc(o.gx + 22, y + 4, 18, Math.PI * 1.4, Math.PI * 0.5);
+      ctx2.closePath();
+      ctx2.fill();
+      ctx2.stroke();
+      return;
+    }
+    const { top, L, R } = blockBody(ctx2, o, c);
+    ctx2.shadowBlur = 0;
+    const cx = o.gx, hw = o.hw;
+    const faceLine = (F, u0, v0, u1, v1) => {
+      const a = facePt(F[0], F[1], F[3], u0, v0), b = facePt(F[0], F[1], F[3], u1, v1);
+      ctx2.beginPath();
+      ctx2.moveTo(a[0], a[1]);
+      ctx2.lineTo(b[0], b[1]);
+      ctx2.stroke();
+    };
+    ctx2.strokeStyle = DARK;
+    ctx2.fillStyle = DARK;
+    ctx2.lineWidth = 2.5;
+    switch (e.type) {
+      case "server": {
+        for (const v of [0.28, 0.5, 0.72]) faceLine(L, 0.18, v, 0.82, v);
+        const led = facePt(R[0], R[1], R[3], 0.3, 0.3);
+        ctx2.fillStyle = Math.floor(t * 2.5) % 2 ? "#7dffb2" : "#2a9d63";
+        ctx2.beginPath();
+        ctx2.arc(led[0], led[1], 3.5, 0, Math.PI * 2);
+        ctx2.fill();
+        break;
+      }
+      case "datacenter": {
+        for (const F of [L, R]) for (const v of [0.2, 0.42, 0.64]) for (const u of [0.2, 0.55]) {
+          poly(ctx2, [facePt(F[0], F[1], F[3], u, v), facePt(F[0], F[1], F[3], u + 0.25, v), facePt(F[0], F[1], F[3], u + 0.25, v + 0.12), facePt(F[0], F[1], F[3], u, v + 0.12)]);
+          ctx2.fill();
+        }
+        break;
+      }
+      case "gateway": {
+        for (const F of [L, R]) poly(ctx2, [facePt(F[0], F[1], F[3], 0.3, 0.32), facePt(F[0], F[1], F[3], 0.7, 0.32), facePt(F[0], F[1], F[3], 0.7, 1), facePt(F[0], F[1], F[3], 0.3, 1)]), ctx2.fill();
+        ctx2.beginPath();
+        ctx2.ellipse(cx, top, hw * 0.42, hw * 0.42 * ISO, 0, 0, Math.PI * 2);
+        ctx2.stroke();
+        break;
+      }
+      case "vpngw": {
+        for (const v of [0.35, 0.65]) faceLine(L, 0.15, v, 0.85, v);
+        ctx2.save();
+        ctx2.translate(cx, top);
+        ctx2.scale(1, 0.75);
+        lock(ctx2, theme, 0, 0, 11, theme.ink);
+        ctx2.restore();
+        break;
+      }
+      case "router": {
+        ctx2.lineWidth = 3;
+        for (const [dx, dy] of [[1, ISO], [-1, -ISO], [1, -ISO], [-1, ISO]]) {
+          const x0 = cx + dx * hw * 0.12, y0 = top + dy * hw * 0.12, x1 = cx + dx * hw * 0.55, y1 = top + dy * hw * 0.55;
+          ctx2.beginPath();
+          ctx2.moveTo(x0, y0);
+          ctx2.lineTo(x1, y1);
+          ctx2.stroke();
+          const a = Math.atan2(y1 - y0, x1 - x0);
+          ctx2.beginPath();
+          ctx2.moveTo(x1, y1);
+          ctx2.lineTo(x1 - 9 * Math.cos(a - 0.5), y1 - 9 * Math.sin(a - 0.5));
+          ctx2.lineTo(x1 - 9 * Math.cos(a + 0.5), y1 - 9 * Math.sin(a + 0.5));
+          ctx2.closePath();
+          ctx2.fill();
+        }
+        for (const v of [0.5]) faceLine(R, 0.15, v, 0.85, v);
+        break;
+      }
+      case "vpc": {
+        ctx2.setLineDash([5, 4]);
+        ctx2.lineWidth = 2;
+        poly(ctx2, [[cx, top - o.hh * 0.6], [cx + hw * 0.6, top], [cx, top + o.hh * 0.6], [cx - hw * 0.6, top]]);
+        ctx2.stroke();
+        ctx2.setLineDash([]);
+        break;
+      }
+      case "firewall": {
+        ctx2.lineWidth = 2;
+        for (const F of [L, R]) {
+          for (const v of [0.33, 0.66]) faceLine(F, 0, v, 1, v);
+          for (const [u, v0, v1] of [[0.5, 0, 0.33], [0.25, 0.33, 0.66], [0.75, 0.33, 0.66], [0.5, 0.66, 1]]) faceLine(F, u, v0, u, v1);
+        }
+        break;
+      }
+    }
+  }
+  function label(ctx2, theme, L, t) {
+    const [x0, y0, x1, y1] = L.box, m = labelMetrics(L.size, L.subSize), solid = L.fill === "solid";
+    if (L.pulse > 0) {
+      ctx2.shadowColor = L.color;
+      ctx2.shadowBlur = 14 + 14 * L.pulse;
+    }
+    rr(ctx2, x0, y0, x1 - x0, y1 - y0, 10);
+    ctx2.fillStyle = solid ? L.color : "rgba(6,22,51,0.94)";
+    ctx2.fill();
+    ctx2.shadowBlur = 0;
+    if (solid) {
+      ctx2.strokeStyle = "rgba(6,22,51,0.35)";
+      ctx2.lineWidth = 2;
+    } else {
+      ctx2.strokeStyle = L.color;
+      ctx2.lineWidth = 2.5 + 1.5 * L.pulse;
+    }
+    ctx2.stroke();
+    ctx2.textAlign = "center";
+    ctx2.textBaseline = "alphabetic";
+    const cx = (x0 + x1) / 2, maxW = x1 - x0 - 2 * m.padX + 1;
+    const base = y0 + m.padY + (m.pitch + L.size * theme.font.cap) / 2;
+    font(ctx2, theme, L.size);
+    L.lines.forEach((line, i) => {
+      ctx2.fillStyle = solid ? theme.ink : theme.paper;
+      ctx2.fillText(line, cx, base + i * m.pitch, maxW);
+    });
+    if (L.sub) {
+      font(ctx2, theme, L.subSize);
+      ctx2.fillStyle = solid ? theme.ink : L.color;
+      ctx2.fillText(L.sub, cx, y0 + m.padY + L.lines.length * m.pitch + (m.subPitch + L.subSize * theme.font.cap) / 2, maxW);
+    }
+    void t;
+  }
+  function packet(ctx2, theme, p) {
+    ctx2.shadowColor = p.color;
+    ctx2.shadowBlur = 18;
+    if (p.glyph === "locked") {
+      ctx2.shadowBlur = 0;
+      lock(ctx2, theme, p.x, p.y, p.r * 0.85, p.color);
+      return;
+    }
+    const hw = p.r, hh = p.r * ISO * 1.2;
+    ctx2.fillStyle = p.color;
+    poly(ctx2, [[p.x, p.y - hh], [p.x + hw, p.y], [p.x, p.y + hh], [p.x - hw, p.y]]);
+    ctx2.fill();
+    ctx2.shadowBlur = 0;
+    ctx2.fillStyle = "rgba(255,255,255,0.9)";
+    poly(ctx2, [[p.x, p.y - hh * 0.45], [p.x + hw * 0.45, p.y], [p.x, p.y + hh * 0.45], [p.x - hw * 0.45, p.y]]);
+    ctx2.fill();
+  }
+  function mark(ctx2, theme, x, y, r, t) {
+    const red = theme.roles.blocked;
+    ctx2.shadowColor = red;
+    ctx2.shadowBlur = 14 + 6 * Math.sin(t * 6);
+    ctx2.fillStyle = theme.ink;
+    ctx2.beginPath();
+    ctx2.arc(x, y, r, 0, Math.PI * 2);
+    ctx2.fill();
+    ctx2.shadowBlur = 0;
+    ctx2.strokeStyle = red;
+    ctx2.lineWidth = 3;
+    ctx2.stroke();
+    ctx2.lineCap = "round";
+    ctx2.lineWidth = 4;
+    const q = r * 0.45;
+    ctx2.beginPath();
+    ctx2.moveTo(x - q, y - q);
+    ctx2.lineTo(x + q, y + q);
+    ctx2.moveTo(x + q, y - q);
+    ctx2.lineTo(x - q, y + q);
+    ctx2.stroke();
+  }
+
+  // src/player/player.ts
+  var E = compile(window.EPISODE);
+  var th = E.theme;
+  var $ = (id) => document.getElementById(id);
+  var stage = $("stage");
+  var wrap2 = $("stageWrap");
+  var scrub = $("scrub");
+  var playBtn = $("play");
+  var sceneSel = $("scene");
+  var frameSel = $("frame");
+  var ctx = stage.getContext("2d");
+  var time = 0;
+  var playing = false;
+  var last = 0;
+  var frame = "panel";
+  $("title").textContent = E.title;
+  scrub.max = String(E.duration);
+  for (const b of E.beats) {
+    const o = document.createElement("option");
+    o.value = String(b.t0);
+    o.textContent = `${b.spec.name ?? b.spec.id} (${b.t0.toFixed(1)}s)`;
+    sceneSel.appendChild(o);
+  }
+  var render = (c, t) => drawFrame(c, th, E.frame(t), t, frame);
+  window.render = (t) => render(ctx, t);
+  var frameHeight = () => frame === "full" ? th.fullH : th.H;
+  function setFrame(f) {
+    frame = f;
+    stage.width = th.W;
+    stage.height = frameHeight();
+    ctx = stage.getContext("2d");
+    wrap2.style.setProperty("--ar", String(frameHeight() / th.W));
+    wrap2.style.setProperty("--ar-css", `${th.W} / ${frameHeight()}`);
+    wrap2.classList.toggle("full", f === "full");
+    const [x0, y0, x1, y1] = th.safe, fh = frameHeight();
+    Object.assign($("safe").style, { left: `${x0 / th.W * 100}%`, top: `${y0 / fh * 100}%`, width: `${(x1 - x0) / th.W * 100}%`, height: `${(y1 - y0) / fh * 100}%` });
+    $("facecam").style.height = `${(th.fullH - th.H) / th.fullH * 100}%`;
+    draw();
+  }
+  function setTime(t) {
+    time = Math.max(0, Math.min(E.duration, t));
+    draw();
+  }
+  function draw() {
+    render(ctx, time);
+    scrub.value = String(time);
+    $("time").textContent = `${time.toFixed(2)} / ${E.duration.toFixed(2)}`;
+    const b = E.beatAt(time), sc = E.scenes[b.scene];
+    if (sceneSel.value !== String(b.t0)) sceneSel.value = String(b.t0);
+    $("nBeat").textContent = `${b.spec.name ?? b.spec.id}  [${b.t0.toFixed(1)}s - ${b.t1.toFixed(1)}s]  caption: ${b.spec.caption}`;
+    $("nLine").textContent = b.spec.line;
+    $("nBlocks").textContent = `${sc.spec.layout}: ` + sc.spec.blocks.map((x) => `${x.id} (${x.type})`).join(", ");
+    const f = b.spec.focus;
+    $("nFocus").textContent = !f || f === "all" ? "all" : f.join(", ") + "  (everything else dims)";
+    $("nFlows").textContent = (b.spec.flows ?? []).map((x) => `${x.route.join(" > ")}${x.reverse ? " (reverse)" : ""}${x.blockAt ? ` blocked at ${x.blockAt}` : ""}`).join("\n") || "none";
+  }
+  function loop(now) {
+    if (!playing) return;
+    time += Math.min(0.1, Math.max(0, (now - last) / 1e3));
+    last = now;
+    if (time >= E.duration) {
+      time = E.duration;
+      pause();
+    }
+    draw();
+    if (playing) requestAnimationFrame(loop);
+  }
+  function play() {
+    if (time >= E.duration) time = 0;
+    playing = true;
+    playBtn.textContent = "Pause";
+    last = performance.now();
+    requestAnimationFrame(loop);
+  }
+  function pause() {
+    playing = false;
+    playBtn.textContent = "Play";
+  }
+  var toggle = () => playing ? pause() : play();
+  var beatStep = (d) => {
+    const i = E.beats.indexOf(E.beatAt(time));
+    setTime(E.beats[Math.max(0, Math.min(E.beats.length - 1, i + d))].t0);
+  };
+  playBtn.onclick = toggle;
+  $("restart").onclick = () => {
+    setTime(0);
+    play();
+  };
+  scrub.oninput = () => {
+    pause();
+    setTime(parseFloat(scrub.value));
+  };
+  sceneSel.onchange = () => {
+    pause();
+    setTime(parseFloat(sceneSel.value));
+  };
+  frameSel.onchange = () => setFrame(frameSel.value);
+  var safeToggle = $("safeToggle");
+  safeToggle.onchange = () => wrap2.classList.toggle("show-safe", safeToggle.checked);
+  document.addEventListener("click", (e) => {
+    if (e.target.tagName === "BUTTON") e.target.blur();
+  });
+  window.addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tg = e.target;
+    if ((tg.tagName === "SELECT" || tg.type === "range") && e.code !== "Space") return;
+    if (e.code === "Space") {
+      e.preventDefault();
+      tg.blur?.();
+      toggle();
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      pause();
+      setTime(time - (e.shiftKey ? 5 : 1));
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      pause();
+      setTime(time + (e.shiftKey ? 5 : 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      pause();
+      beatStep(-1);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      pause();
+      beatStep(1);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      setTime(0);
+    } else if (e.key === "s" || e.key === "S") {
+      safeToggle.checked = !safeToggle.checked;
+      safeToggle.onchange?.(new Event("change"));
+    }
+  });
+  var status = $("exportStatus");
+  var buttons = ["mp4", "webm"].map((id) => $(id));
+  var busy = (on) => {
+    buttons.forEach((b) => b.disabled = on);
+    frameSel.disabled = on;
+  };
+  var makeCanvas = () => {
+    const c = document.createElement("canvas");
+    c.width = th.W;
+    c.height = frameHeight();
+    return c;
+  };
+  var fileBase = () => `${E.id}-${th.W}x${frameHeight()}-${th.fps}fps`;
+  function save(blob, name) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1e4);
+  }
+  var loadScript = (src) => new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = res;
+    s.onerror = () => rej(new Error("could not load " + src));
+    document.head.appendChild(s);
+  });
+  async function exportMp4() {
+    let encoder = null;
+    if (!("VideoEncoder" in window)) {
+      status.textContent = "This browser has no WebCodecs encoder. Use Record WebM, or run npm run render.";
+      return;
+    }
+    pause();
+    busy(true);
+    status.className = "status";
+    try {
+      status.textContent = "Loading MP4 muxer...";
+      if (!window.Mp4Muxer) await loadScript("https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.min.js");
+      const W = th.W, H = frameHeight(), fps = th.fps;
+      let config = null;
+      for (const codec of ["avc1.640032", "avc1.4d0032", "avc1.42e032", "avc1.640028"]) {
+        const c = { codec, width: W, height: H, bitrate: 12e6, framerate: fps, avc: { format: "avc" } };
+        if ((await VideoEncoder.isConfigSupported(c)).supported) {
+          config = c;
+          break;
+        }
+      }
+      if (!config) throw new Error(`no supported H.264 configuration for ${W} x ${H}`);
+      const M = window.Mp4Muxer;
+      const muxer = new M.Muxer({ target: new M.ArrayBufferTarget(), video: { codec: "avc", width: W, height: H, frameRate: fps }, fastStart: "in-memory" });
+      let encErr = null;
+      encoder = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: (e) => {
+        encErr = e;
+      } });
+      encoder.configure(config);
+      const canvas = makeCanvas(), c2 = canvas.getContext("2d");
+      const frames = Math.round(E.duration * fps);
+      for (let i = 0; i < frames; i++) {
+        if (encErr) throw encErr;
+        render(c2, i / fps);
+        const vf = new VideoFrame(canvas, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
+        encoder.encode(vf, { keyFrame: i % (fps * 2) === 0 });
+        vf.close();
+        while (encoder.encodeQueueSize > 8) await new Promise((r) => setTimeout(r, 1));
+        if (i % 15 === 0) {
+          status.textContent = `Encoding MP4 (keep this tab visible): frame ${i + 1} / ${frames}`;
+          await new Promise((r) => setTimeout(r, 0));
+        }
+      }
+      await encoder.flush();
+      if (encErr) throw encErr;
+      muxer.finalize();
+      save(new Blob([muxer.target.buffer], { type: "video/mp4" }), fileBase() + ".mp4");
+      status.textContent = `MP4 ready: ${frames} frames, ${W} x ${H}, ${fps} fps, silent (${config.codec}).`;
+    } catch (e) {
+      status.textContent = "MP4 export failed: " + e.message + ". Record WebM still works.";
+    } finally {
+      if (encoder && encoder.state !== "closed") encoder.close();
+      busy(false);
+    }
+  }
+  async function recordWebm() {
+    pause();
+    busy(true);
+    status.className = "status";
+    try {
+      const canvas = makeCanvas(), c2 = canvas.getContext("2d"), fps = th.fps;
+      render(c2, 0);
+      const stream = canvas.captureStream(0), track = stream.getVideoTracks()[0];
+      const mime = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find((m) => MediaRecorder.isTypeSupported(m));
+      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12e6 });
+      const chunks = [];
+      rec.ondataavailable = (e) => {
+        if (e.data.size) chunks.push(e.data);
+      };
+      const done = new Promise((r) => {
+        rec.onstop = r;
+      });
+      rec.start();
+      const frames = Math.round(E.duration * fps), t0 = performance.now();
+      for (let i = 0; i < frames; i++) {
+        render(c2, i / fps);
+        track.requestFrame();
+        const wait = t0 + (i + 1) * 1e3 / fps - performance.now();
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        if (i % 15 === 0) status.textContent = `Recording WebM in real time (keep this tab visible): ${(i / fps).toFixed(1)}s / ${E.duration.toFixed(1)}s`;
+      }
+      await new Promise((r) => setTimeout(r, 1e3 / fps));
+      rec.stop();
+      await done;
+      save(new Blob(chunks, { type: "video/webm" }), fileBase() + ".webm");
+      status.textContent = "WebM ready (canvas only, silent).";
+    } catch (e) {
+      status.textContent = "WebM recording failed: " + e.message;
+    } finally {
+      busy(false);
+    }
+  }
+  $("mp4").onclick = exportMp4;
+  $("webm").onclick = recordWebm;
+  (async function boot() {
+    try {
+      const face = new FontFace(th.font.family, `url(data:font/woff2;base64,${window.FONT_B64})`, { weight: "700" });
+      await face.load();
+      document.fonts.add(face);
+    } catch (e) {
+      console.warn("embedded font failed to load, using fallback", e);
+    }
+    $("layoutStatus").textContent = `${E.scenes.length} scenes, ${E.beats.length} beats, ${E.duration.toFixed(1)}s. Checks ran at build time.`;
+    setFrame(frameSel.value);
+    safeToggle.onchange?.(new Event("change"));
+  })();
+})();
+
+</script>
+</body>
+</html>
